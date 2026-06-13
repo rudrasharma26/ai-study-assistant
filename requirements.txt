@@ -3,6 +3,4 @@ requests
 python-dotenv
 streamlit-lottie
 fpdf2
-Pillow
-fonttools
-defusedxml
+reportlab
