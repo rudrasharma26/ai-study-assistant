@@ -1,0 +1,249 @@
+"""
+Backend/parser.py
+
+Turns the raw AI response into structured data the frontend can render.
+
+This replaces the original app.py's `result.split("###")`, which assumed
+exactly 4 sections in a fixed order with nothing else in the text.
+
+This module provides:
+- parse_study_material(raw_text) -> dict with explanation/summary/
+  important_points/quiz (quiz is a list of {"question", "answer"} dicts)
+- check_answer(user_answer, correct_answer) -> (verdict, score) for the
+  interactive "Attempt the Quiz" mode
+
+Nothing here makes network calls or touches Streamlit -- it's pure text
+processing, which makes it easy to test in isolation.
+"""
+
+import re
+import difflib
+
+from backend.prompts import (
+    SECTION_EXPLANATION,
+    SECTION_SUMMARY,
+    SECTION_IMPORTANT_POINTS,
+    SECTION_QUIZ,
+    SECTION_HEADERS,
+)
+
+# ---------------------------------------------------------------------------
+# Section parsing
+# ---------------------------------------------------------------------------
+
+# Matches a markdown heading like "### Explanation" on its own line and
+# captures the heading text. Allows any number of leading #'s (### or ##)
+# in case the model varies heading depth slightly.
+_HEADING_PATTERN = re.compile(r'^#{2,4}\s*(.+?)\s*$', re.MULTILINE)
+
+# Alternate header names the model might use, mapped to our canonical names.
+_HEADER_ALIASES = {
+    "explanation": SECTION_EXPLANATION,
+    "concept explanation": SECTION_EXPLANATION,
+    "summary": SECTION_SUMMARY,
+    "revision notes": SECTION_SUMMARY,
+    "important points": SECTION_IMPORTANT_POINTS,
+    "key points": SECTION_IMPORTANT_POINTS,
+    "important notes": SECTION_IMPORTANT_POINTS,
+    "quiz": SECTION_QUIZ,
+    "quiz questions": SECTION_QUIZ,
+    "practice questions": SECTION_QUIZ,
+}
+
+
+def _match_header(header_text: str):
+    """Map a heading found in the AI output to one of our canonical
+    section names, or return None if it doesn't match anything known."""
+    normalized = header_text.strip().lower()
+    for canonical in SECTION_HEADERS:
+        if canonical.lower() == normalized:
+            return canonical
+    return _HEADER_ALIASES.get(normalized)
+
+
+def parse_sections(raw_text: str) -> dict:
+    """
+    Split the raw AI response into the four known sections by NAME, not by
+    position. Any content under an unrecognized heading (or before the
+    first heading) is appended to the Explanation section so nothing is
+    silently lost.
+    """
+    sections = {header: "" for header in SECTION_HEADERS}
+
+    if not raw_text or not raw_text.strip():
+        return sections
+
+    matches = list(_HEADING_PATTERN.finditer(raw_text))
+
+    if not matches:
+        # No headings at all -- treat the whole response as the explanation.
+        sections[SECTION_EXPLANATION] = raw_text.strip()
+        return sections
+
+    # Anything before the first heading (rare, but don't lose it)
+    preamble = raw_text[: matches[0].start()].strip()
+    if preamble:
+        sections[SECTION_EXPLANATION] = preamble
+
+    for i, match in enumerate(matches):
+        header_text = match.group(1)
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(raw_text)
+        content = raw_text[start:end].strip()
+
+        canonical = _match_header(header_text)
+        if canonical is None:
+            # Unknown heading -- keep it, attached to the explanation,
+            # rather than dropping it.
+            extra = f"#### {header_text.strip()}\n{content}"
+            sections[SECTION_EXPLANATION] = (
+                f"{sections[SECTION_EXPLANATION]}\n\n{extra}".strip()
+                if sections[SECTION_EXPLANATION]
+                else extra
+            )
+            continue
+
+        if sections[canonical]:
+            sections[canonical] = f"{sections[canonical]}\n\n{content}"
+        else:
+            sections[canonical] = content
+
+    return sections
+
+
+# ---------------------------------------------------------------------------
+# Quiz parsing
+# ---------------------------------------------------------------------------
+
+# Matches the strict format requested in prompts.py:
+#   **Q1:** question text
+#   **Answer:** answer text
+# Tolerant of "Q1.", "Q1)", missing bold, etc.
+_QUIZ_PATTERN = re.compile(
+    r'\*{0,2}Q\s*\d*\s*[:.)]?\*{0,2}\s*(.*?)\s*'
+    r'\*{0,2}Answer\s*[:.)]?\*{0,2}\s*(.*?)'
+    r'(?=\*{0,2}Q\s*\d*\s*[:.)]?\*{0,2}|\Z)',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def parse_quiz(quiz_text: str) -> list:
+    """
+    Parse the Quiz section into a list of {"question": str, "answer": str}.
+
+    Falls back to a single raw item if the strict Q/Answer format isn't
+    found, so the quiz tab never ends up empty when the model has actually
+    written *something* there.
+    """
+    quiz_text = (quiz_text or "").strip()
+    if not quiz_text:
+        return []
+
+    items = []
+    for question, answer in _QUIZ_PATTERN.findall(quiz_text):
+        question = question.strip()
+        answer = answer.strip()
+        if question and answer:
+            items.append({"question": question, "answer": answer})
+
+    if items:
+        return items
+
+    # Fallback: model didn't follow the Q/Answer format. Show the raw text
+    # as a single "question" so the user still sees content instead of
+    # an empty quiz tab.
+    return [{
+        "question": "Quiz (shown as provided by the AI)",
+        "answer": quiz_text,
+    }]
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point
+# ---------------------------------------------------------------------------
+
+def parse_study_material(raw_text: str) -> dict:
+    """
+    Parse a full raw AI response into a structured dict:
+
+    {
+        "explanation": str,
+        "summary": str,
+        "important_points": str,
+        "quiz": [{"question": str, "answer": str}, ...],
+        "raw": str,   # original text, for export/copy
+    }
+    """
+    sections = parse_sections(raw_text)
+    return {
+        "explanation": sections.get(SECTION_EXPLANATION, "").strip(),
+        "summary": sections.get(SECTION_SUMMARY, "").strip(),
+        "important_points": sections.get(SECTION_IMPORTANT_POINTS, "").strip(),
+        "quiz": parse_quiz(sections.get(SECTION_QUIZ, "")),
+        "raw": raw_text or "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Interactive "Attempt the Quiz" answer checking
+# ---------------------------------------------------------------------------
+
+_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "of", "to", "in", "on",
+    "for", "and", "or", "it", "its", "this", "that", "these", "those",
+    "with", "as", "by", "be", "been", "being", "at", "from", "into",
+    "their", "they", "which", "what", "who", "whom", "than", "then",
+    "so", "but", "if", "we", "you", "your", "i",
+}
+
+
+def _significant_words(text: str) -> set:
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return {w for w in words if w not in _STOPWORDS and len(w) > 1}
+
+
+def check_answer(user_answer: str, correct_answer: str):
+    """
+    Heuristically compare a student's free-text answer to the AI's
+    reference answer for the interactive "Attempt the Quiz" mode.
+
+    NOTE: This is intentionally a lightweight, zero-cost heuristic
+    (word overlap + sequence similarity) -- NOT a perfect grader.
+    True free-text grading would need another AI call. The verdict is
+    meant to set the tone of an encouraging reveal, not to be the final
+    word -- the reference answer is always shown alongside it.
+
+    Returns:
+        (verdict, score) where:
+          - verdict is one of "correct", "partial", "incorrect", "empty"
+          - score is a float 0.0-1.0 indicating overlap with the
+            reference answer
+    """
+    user_answer = (user_answer or "").strip()
+    correct_answer = (correct_answer or "").strip()
+
+    if not user_answer:
+        return "empty", 0.0
+
+    user_words = _significant_words(user_answer)
+    correct_words = _significant_words(correct_answer)
+
+    if correct_words:
+        overlap = len(user_words & correct_words) / len(correct_words)
+    else:
+        overlap = 0.0
+
+    similarity = difflib.SequenceMatcher(
+        None, user_answer.lower(), correct_answer.lower()
+    ).ratio()
+
+    score = max(overlap, similarity)
+
+    if score >= 0.55:
+        verdict = "correct"
+    elif score >= 0.25:
+        verdict = "partial"
+    else:
+        verdict = "incorrect"
+
+    return verdict, round(score, 2)

@@ -1,0 +1,16 @@
+# Environment & secrets
+.env
+
+# Virtual environment
+venv/
+
+# Local data (history & favorites)
+data/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/
+.dist/
