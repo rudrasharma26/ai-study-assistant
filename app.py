@@ -113,8 +113,15 @@ if not st.session_state.username:
         st.session_state.username = submitted_name
         storage.set_username(submitted_name)
         st.session_state.bhabhi_mode = storage.is_bhabhi_mode(submitted_name)
-        st.rerun()
-    st.stop()
+        # No explicit st.rerun()/st.stop() here: form submission already
+        # triggers Streamlit's natural rerun, and ending the script early
+        # was aborting it before the cookie-set component call finished
+        # writing to the browser, so the username cookie never actually
+        # persisted. Falling through lets the rest of the app render on
+        # this same run (st.session_state.username is now set, so this
+        # block won't re-trigger).
+    else:
+        st.stop()
 
 
 # ---------------------------------------------------------------------------
