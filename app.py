@@ -64,6 +64,13 @@ if not st.session_state.get("_cookies_loaded") and st.session_state._cookie_load
     st.session_state._cookie_load_attempts += 1
     st.rerun()
 
+# --- TEMP DEBUG --- remove after diagnosing
+st.write("DEBUG _cookies_loaded:", st.session_state.get("_cookies_loaded"))
+st.write("DEBUG _cookie_load_attempts:", st.session_state.get("_cookie_load_attempts"))
+st.write("DEBUG cookie_manager.cookies:", st.session_state._cookie_manager.cookies)
+st.write("DEBUG get_username():", repr(storage.get_username()))
+# --- END TEMP DEBUG ---
+
 
 # ---------------------------------------------------------------------------
 # Session state initialization
