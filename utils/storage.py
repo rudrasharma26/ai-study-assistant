@@ -99,24 +99,27 @@ def init_storage() -> "stx.CookieManager":
     Initialize (or fetch) the CookieManager for this session.
 
     Must be called once near the top of app.py, before any of the
-    get_*/set_* helpers below. Stores the manager in st.session_state so
-    it isn't re-created on every rerun.
+    get_*/set_* helpers below.
 
-    NOTE: CookieManager.__init__ calls getAll() once. On a fresh page
-    load, that first call can return before the browser has sent its
-    cookies back to the component, so self.cookies may be empty even
-    though the cookies exist. app.py handles this by triggering one
-    extra rerun (see app.py) and calling refresh_cookies() below before
-    re-checking get_username().
+    NOTE: declare_component-based components (like CookieManager) return
+    a `default` value on their first render and only return the real
+    value (here, the actual browser cookies) after the frontend responds
+    and the script reruns. So: keep re-invoking CookieManager(key=...)
+    with the SAME key on each rerun until it returns a non-empty cookie
+    jar (or we've already confirmed cookies are loaded), THEN cache it.
+    Re-invoking with the same key is cheap -- Streamlit reuses the same
+    component instance.
     """
-    if "_cookie_manager" not in st.session_state:
-        st.session_state._cookie_manager = stx.CookieManager(key="study_assistant_cookies")
-    return st.session_state._cookie_manager
+    if st.session_state.get("_cookies_loaded"):
+        if "_cookie_manager" not in st.session_state:
+            st.session_state._cookie_manager = stx.CookieManager(key="study_assistant_cookies")
+        return st.session_state._cookie_manager
 
-
-def refresh_cookies() -> None:
-    """Re-fetch all cookies from the browser into the cached manager."""
-    _cm().get_all(key="refresh_cookies")
+    manager = stx.CookieManager(key="study_assistant_cookies")
+    if manager.cookies:
+        st.session_state._cookies_loaded = True
+    st.session_state._cookie_manager = manager
+    return manager
 
 
 def _cm() -> "stx.CookieManager":

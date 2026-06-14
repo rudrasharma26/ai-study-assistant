@@ -51,21 +51,18 @@ inject_custom_css()
 # ---------------------------------------------------------------------------
 # Per-device persistent storage (username, history, favorites via cookies)
 # ---------------------------------------------------------------------------
+# CookieManager only returns real browser cookies after a couple of
+# reruns (its first render(s) return an empty default). Rerun a few times
+# until cookies are loaded, capped so a genuinely new device (zero
+# cookies, so _cookies_loaded never flips True) doesn't loop forever.
+if "_cookie_load_attempts" not in st.session_state:
+    st.session_state._cookie_load_attempts = 0
+
 storage.init_storage()
 
-# CookieManager's first read on a fresh page load can return before the
-# browser has sent cookies back to the component. Give it one extra rerun
-# so existing cookies (username/history/favorites) are available before we
-# decide this is a "new" user/device.
-if "_cookies_ready" not in st.session_state:
-    st.session_state._cookies_ready = False
-
-if not st.session_state._cookies_ready:
-    st.session_state._cookies_ready = True
-    if not storage.get_username():
-        storage.refresh_cookies()
-        if not storage.get_username():
-            st.rerun()
+if not st.session_state.get("_cookies_loaded") and st.session_state._cookie_load_attempts < 3:
+    st.session_state._cookie_load_attempts += 1
+    st.rerun()
 
 
 # ---------------------------------------------------------------------------
