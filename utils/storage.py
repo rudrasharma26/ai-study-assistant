@@ -2,29 +2,28 @@
 utils/storage.py
 
 Handles persistence of:
-- Username (per-device, via browser localStorage)
-- Search History (per-device, via browser localStorage)
-- Favorites (per-device, via browser localStorage)
+- Username (per-device, via browser cookies)
+- Search History (per-device, via browser cookies)
+- Favorites (per-device, via browser cookies)
 - A developer-facing usage log (name + topic + timestamp), sent to a
   Google Form so the developer can review usage across all devices.
 
 PER-DEVICE STORAGE
 ------------------
-Username, history, and favorites are stored in the browser's
-localStorage via the `streamlit-local-storage` component. This means:
+Username, history, and favorites are stored as browser cookies via
+`extra_streamlit_components.CookieManager`. This means:
 
 - Each browser/device has its own independent name, history, and
   favorites.
 - Data persists across page reloads and future visits on the same
-  browser (until the user clears site data).
+  browser (cookies are set with a long expiry -- see _COOKIE_EXPIRY_DAYS)
+  until the user clears site data.
 - A different person on a different device (or a different browser /
   incognito session) gets their own onboarding prompt and their own
   history -- nothing is shared between devices.
 
-This file is intentionally Streamlit-aware (unlike the old version) --
-it wraps `streamlit_local_storage.LocalStorage` and exposes simple
-get/set helpers. app.py should call `init_local_storage()` once near the
-top of the script, then use the helpers below.
+app.py should call `init_storage()` once near the top of the script
+(after st.set_page_config), then use the helpers below.
 
 DEVELOPER USAGE LOG
 --------------------
@@ -42,19 +41,23 @@ This is fire-and-forget:
 """
 
 import json
+import datetime
 import requests
 import streamlit as st
-from streamlit_local_storage import LocalStorage
+import extra_streamlit_components as stx
 
 
 # ---------------------------------------------------------------------------
-# localStorage keys
+# Cookie keys
 # ---------------------------------------------------------------------------
-LS_USERNAME = "study_assistant_username"
-LS_HISTORY = "study_assistant_history"
-LS_FAVORITES = "study_assistant_favorites"
+CK_USERNAME = "study_assistant_username"
+CK_HISTORY = "study_assistant_history"
+CK_FAVORITES = "study_assistant_favorites"
 
 MAX_HISTORY_ITEMS = 10
+
+# How long these cookies last (persists across visits on the same browser).
+_COOKIE_EXPIRY_DAYS = 365
 
 
 # ---------------------------------------------------------------------------
@@ -88,29 +91,33 @@ def log_event(name: str, topic: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# localStorage setup
+# Cookie manager setup
 # ---------------------------------------------------------------------------
 
-def init_local_storage() -> LocalStorage:
+def init_storage() -> "stx.CookieManager":
     """
-    Initialize (or fetch) the LocalStorage component for this session.
+    Initialize (or fetch) the CookieManager for this session.
 
-    Must be called once before any of the get_*/set_* helpers below.
-    Stores the component instance in st.session_state so it isn't
-    re-initialized on every rerun.
+    Must be called once near the top of app.py, before any of the
+    get_*/set_* helpers below. Stores the manager in st.session_state so
+    it isn't re-created on every rerun.
     """
-    if "_local_storage" not in st.session_state:
-        st.session_state._local_storage = LocalStorage(key="study_assistant_storage")
-    return st.session_state._local_storage
+    if "_cookie_manager" not in st.session_state:
+        st.session_state._cookie_manager = stx.CookieManager(key="study_assistant_cookies")
+    return st.session_state._cookie_manager
 
 
-def _ls() -> LocalStorage:
-    return st.session_state._local_storage
+def _cm() -> "stx.CookieManager":
+    return st.session_state._cookie_manager
 
 
-def _get_json(item_key: str, default):
-    """Read a JSON-encoded value from localStorage, with a safe default."""
-    raw = _ls().getItem(item_key)
+def _expiry():
+    return datetime.datetime.now() + datetime.timedelta(days=_COOKIE_EXPIRY_DAYS)
+
+
+def _get_json(cookie_key: str, default):
+    """Read a JSON-encoded value from cookies, with a safe default."""
+    raw = _cm().get(cookie_key)
     if raw is None or raw == "":
         return default
     try:
@@ -119,15 +126,14 @@ def _get_json(item_key: str, default):
         return default
 
 
-def _set_json(item_key: str, value, ls_key: str) -> None:
-    """
-    Write a JSON-encoded value to localStorage.
-
-    NOTE: streamlit-local-storage's setItem() ignores empty strings, so
-    we always write through json.dumps() -- even an empty list becomes
-    the non-empty string "[]", which IS written correctly.
-    """
-    _ls().setItem(item_key, json.dumps(value), key=ls_key)
+def _set_json(cookie_key: str, value, set_key: str) -> None:
+    """Write a JSON-encoded value to a cookie."""
+    _cm().set(
+        cookie_key,
+        json.dumps(value),
+        key=set_key,
+        expires_at=_expiry(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +142,7 @@ def _set_json(item_key: str, value, ls_key: str) -> None:
 
 def get_username() -> str:
     """Return the saved username for this device, or "" if not set yet."""
-    value = _ls().getItem(LS_USERNAME)
+    value = _cm().get(CK_USERNAME)
     return value or ""
 
 
@@ -145,7 +151,7 @@ def set_username(name: str) -> None:
     name = (name or "").strip()
     if not name:
         return
-    _ls().setItem(LS_USERNAME, name, key="set_username")
+    _cm().set(CK_USERNAME, name, key="set_username", expires_at=_expiry())
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +160,7 @@ def set_username(name: str) -> None:
 
 def get_history() -> list:
     """Return this device's search history, most-recent-first."""
-    return _get_json(LS_HISTORY, [])
+    return _get_json(CK_HISTORY, [])
 
 
 def add_to_history(topic: str, difficulty: str, study_mode: str) -> None:
@@ -176,12 +182,12 @@ def add_to_history(topic: str, difficulty: str, study_mode: str) -> None:
     })
 
     history = history[:MAX_HISTORY_ITEMS]
-    _set_json(LS_HISTORY, history, ls_key="set_history")
+    _set_json(CK_HISTORY, history, set_key="set_history")
 
 
 def clear_history() -> None:
     """Clear this device's search history."""
-    _set_json(LS_HISTORY, [], ls_key="clear_history")
+    _set_json(CK_HISTORY, [], set_key="clear_history")
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +196,7 @@ def clear_history() -> None:
 
 def get_favorites() -> list:
     """Return this device's favorites."""
-    return _get_json(LS_FAVORITES, [])
+    return _get_json(CK_FAVORITES, [])
 
 
 def is_favorite(topic: str) -> bool:
@@ -220,7 +226,7 @@ def toggle_favorite(topic: str, difficulty: str, study_mode: str) -> None:
             "study_mode": study_mode,
         })
 
-    _set_json(LS_FAVORITES, favorites, ls_key="set_favorites")
+    _set_json(CK_FAVORITES, favorites, set_key="set_favorites")
 
 
 def remove_favorite(topic: str) -> None:
@@ -232,7 +238,7 @@ def remove_favorite(topic: str) -> None:
         item for item in get_favorites()
         if (item.get("topic") or "").strip().lower() != topic_norm
     ]
-    _set_json(LS_FAVORITES, favorites, ls_key="remove_favorite")
+    _set_json(CK_FAVORITES, favorites, set_key="remove_favorite")
 
 
 # ---------------------------------------------------------------------------

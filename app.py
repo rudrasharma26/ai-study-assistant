@@ -49,9 +49,9 @@ inject_custom_css()
 
 
 # ---------------------------------------------------------------------------
-# Per-device local storage (username, history, favorites)
+# Per-device persistent storage (username, history, favorites via cookies)
 # ---------------------------------------------------------------------------
-storage.init_local_storage()
+storage.init_storage()
 
 
 # ---------------------------------------------------------------------------
