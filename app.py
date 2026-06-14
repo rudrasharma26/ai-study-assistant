@@ -185,11 +185,6 @@ with st.sidebar:
     history_items = storage.get_history()
     C.render_sidebar_history(history_items, topic_key="topic_input")
 
-    # --- TEMP DEBUG ---
-    st.caption(f"DEBUG raw cookie: {storage._cm().cookies.get(storage.CK_HISTORY)!r}")
-    st.caption(f"DEBUG get_history(): {history_items!r}")
-    # --- END TEMP DEBUG ---
-
     if history_items:
         if C.render_clear_history_button():
             storage.clear_history()
