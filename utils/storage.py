@@ -101,10 +101,22 @@ def init_storage() -> "stx.CookieManager":
     Must be called once near the top of app.py, before any of the
     get_*/set_* helpers below. Stores the manager in st.session_state so
     it isn't re-created on every rerun.
+
+    NOTE: CookieManager.__init__ calls getAll() once. On a fresh page
+    load, that first call can return before the browser has sent its
+    cookies back to the component, so self.cookies may be empty even
+    though the cookies exist. app.py handles this by triggering one
+    extra rerun (see app.py) and calling refresh_cookies() below before
+    re-checking get_username().
     """
     if "_cookie_manager" not in st.session_state:
         st.session_state._cookie_manager = stx.CookieManager(key="study_assistant_cookies")
     return st.session_state._cookie_manager
+
+
+def refresh_cookies() -> None:
+    """Re-fetch all cookies from the browser into the cached manager."""
+    _cm().get_all(key="refresh_cookies")
 
 
 def _cm() -> "stx.CookieManager":

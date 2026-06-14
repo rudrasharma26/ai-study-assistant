@@ -53,6 +53,20 @@ inject_custom_css()
 # ---------------------------------------------------------------------------
 storage.init_storage()
 
+# CookieManager's first read on a fresh page load can return before the
+# browser has sent cookies back to the component. Give it one extra rerun
+# so existing cookies (username/history/favorites) are available before we
+# decide this is a "new" user/device.
+if "_cookies_ready" not in st.session_state:
+    st.session_state._cookies_ready = False
+
+if not st.session_state._cookies_ready:
+    st.session_state._cookies_ready = True
+    if not storage.get_username():
+        storage.refresh_cookies()
+        if not storage.get_username():
+            st.rerun()
+
 
 # ---------------------------------------------------------------------------
 # Session state initialization
