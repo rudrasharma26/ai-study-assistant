@@ -64,18 +64,18 @@ if not st.session_state.get("_cookies_loaded") and st.session_state._cookie_load
     st.session_state._cookie_load_attempts += 1
     st.rerun()
 
-# --- TEMP DEBUG --- remove after diagnosing
-st.write("DEBUG _cookies_loaded:", st.session_state.get("_cookies_loaded"))
-st.write("DEBUG _cookie_load_attempts:", st.session_state.get("_cookie_load_attempts"))
-st.write("DEBUG cookie_manager.cookies:", st.session_state._cookie_manager.cookies)
-st.write("DEBUG get_username():", repr(storage.get_username()))
-# --- END TEMP DEBUG ---
-
 
 # ---------------------------------------------------------------------------
 # Session state initialization
 # ---------------------------------------------------------------------------
 if "username" not in st.session_state:
+    st.session_state.username = None
+
+# Once cookies are confirmed loaded, sync username from the cookie if we
+# don't already have one in session_state (handles the case where
+# session_state.username was set to None on an earlier run, before the
+# cookie value was available).
+if st.session_state.get("_cookies_loaded") and not st.session_state.username:
     st.session_state.username = storage.get_username() or None
 
 if "bhabhi_mode" not in st.session_state:
@@ -84,6 +84,8 @@ if "bhabhi_mode" not in st.session_state:
         if st.session_state.username
         else False
     )
+elif st.session_state.username and not st.session_state.bhabhi_mode:
+    st.session_state.bhabhi_mode = storage.is_bhabhi_mode(st.session_state.username)
 
 if "bhabhi_revealed" not in st.session_state:
     st.session_state.bhabhi_revealed = False
