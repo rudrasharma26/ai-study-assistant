@@ -53,8 +53,14 @@ import extra_streamlit_components as stx
 CK_USERNAME = "study_assistant_username"
 CK_HISTORY = "study_assistant_history"
 CK_FAVORITES = "study_assistant_favorites"
+CK_CACHE = "study_assistant_cache"
 
 MAX_HISTORY_ITEMS = 10
+
+# How many full generated results to keep cached per device. Kept small
+# because each cached entry stores the full raw AI response text, and
+# cookies have a practical size limit (~4KB).
+MAX_CACHE_ITEMS = 2
 
 # How long these cookies last (persists across visits on the same browser).
 _COOKIE_EXPIRY_DAYS = 365
@@ -203,6 +209,46 @@ def add_to_history(topic: str, difficulty: str, study_mode: str) -> None:
 def clear_history() -> None:
     """Clear this device's search history."""
     _set_json(CK_HISTORY, [], set_key="clear_history")
+
+
+# ---------------------------------------------------------------------------
+# Result cache (per-device)
+# ---------------------------------------------------------------------------
+# Avoids re-calling the AI API for a topic/difficulty/study_mode
+# combination that was already generated recently on this device.
+# Stores the raw AI response text so it can be re-parsed exactly as if
+# it had just come back from the API.
+
+def _cache_key(topic: str, difficulty: str, study_mode: str) -> str:
+    return f"{(topic or '').strip().lower()}|{difficulty}|{study_mode}"
+
+
+def get_cached_result(topic: str, difficulty: str, study_mode: str):
+    """
+    Return the cached raw AI response text for this exact
+    topic/difficulty/study_mode combination, or None if not cached.
+    """
+    cache = _get_json(CK_CACHE, [])
+    key = _cache_key(topic, difficulty, study_mode)
+    for entry in cache:
+        if entry.get("key") == key:
+            return entry.get("raw")
+    return None
+
+
+def cache_result(topic: str, difficulty: str, study_mode: str, raw: str) -> None:
+    """
+    Save a generated result to this device's cache, most-recent-first,
+    capped at MAX_CACHE_ITEMS.
+    """
+    cache = _get_json(CK_CACHE, [])
+    key = _cache_key(topic, difficulty, study_mode)
+
+    cache = [entry for entry in cache if entry.get("key") != key]
+    cache.insert(0, {"key": key, "raw": raw})
+    cache = cache[:MAX_CACHE_ITEMS]
+
+    _set_json(CK_CACHE, cache, set_key="set_cache")
 
 
 # ---------------------------------------------------------------------------
