@@ -503,7 +503,9 @@ def render_export_row(parsed: dict, topic: str, difficulty: str = "", study_mode
 
 def render_section_card(title, icon, content, key=None):
 
-    with st.container(border=True):
+    container_key = f"section-card-{key}" if key else "section-card"
+
+    with st.container(key=container_key, border=True):
 
         st.markdown(
             f"## {icon} {title}"

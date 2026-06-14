@@ -653,6 +653,23 @@ div[data-testid="stFormSubmitButton"] button:hover,
 
 
 /* ==========================================================================
+   SECTION CONTENT CARDS
+   (components.render_section_card -> key="section-card-<key>")
+   Glass card background so generated text doesn't sit directly on the
+   page's gradient/dotted background.
+   ========================================================================== */
+div[class*="st-key-section-card-"],
+.st-key-section-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color) !important;
+    border-radius: 16px;
+    padding: 1.5rem 1.75rem;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+
+/* ==========================================================================
    INPUTS -- premium styling with glow on focus
    ========================================================================== */
 .stTextInput input,

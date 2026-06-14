@@ -2,210 +2,237 @@
 utils/storage.py
 
 Handles persistence of:
-- Search History
-- Favorites
-- Username (for the onboarding / welcome flow)
+- Username (per-device, via browser localStorage)
+- Search History (per-device, via browser localStorage)
+- Favorites (per-device, via browser localStorage)
+- A developer-facing usage log (name + topic + timestamp), sent to a
+  Google Form so the developer can review usage across all devices.
 
-All of this is stored in a single local JSON file (data/history.json), so it
-survives an app restart.
+PER-DEVICE STORAGE
+------------------
+Username, history, and favorites are stored in the browser's
+localStorage via the `streamlit-local-storage` component. This means:
 
-This module is intentionally Streamlit-free -- it just reads/writes a JSON
-file and returns plain Python dicts/lists/strings. app.py calls these
-functions directly and/or keeps a copy in st.session_state for fast access
-within a session.
+- Each browser/device has its own independent name, history, and
+  favorites.
+- Data persists across page reloads and future visits on the same
+  browser (until the user clears site data).
+- A different person on a different device (or a different browser /
+  incognito session) gets their own onboarding prompt and their own
+  history -- nothing is shared between devices.
 
-Data shape (data/history.json):
-{
-    "history":   [ {"topic", "difficulty", "study_mode", "timestamp"}, ... ],
-    "favorites": [ {"topic", "difficulty", "study_mode", "timestamp"}, ... ],
-    "username":  "Some Name"
-}
+This file is intentionally Streamlit-aware (unlike the old version) --
+it wraps `streamlit_local_storage.LocalStorage` and exposes simple
+get/set helpers. app.py should call `init_local_storage()` once near the
+top of the script, then use the helpers below.
 
-History is ordered most-recent-first and capped at MAX_HISTORY_ITEMS.
-Topics are de-duplicated case-insensitively -- re-searching a topic moves it
-back to the top instead of creating a duplicate entry.
+DEVELOPER USAGE LOG
+--------------------
+Every time a user generates study material, `log_event(name, topic)` is
+called. This fires a best-effort POST to a Google Form's `/formResponse`
+endpoint, which appends a row (name, topic, timestamp-by-Forms) to a
+linked Google Sheet that only the developer can see.
+
+This is fire-and-forget:
+- Wrapped in try/except -- a network hiccup or blocked request NEVER
+  breaks the app or the user's experience.
+- Short timeout so it can't noticeably delay the UI.
+- The user is never shown this data and it does not affect their
+  local history/favorites in any way.
 """
 
-import os
 import json
-from datetime import datetime
-
-# Project-root-relative data directory.
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DATA_DIR = os.path.join(_BASE_DIR, "data")
-_DATA_FILE = os.path.join(_DATA_DIR, "history.json")
-
-MAX_HISTORY_ITEMS = 15
-
-_DEFAULT_DATA = {"history": [], "favorites": [], "username": ""}
+import requests
+import streamlit as st
+from streamlit_local_storage import LocalStorage
 
 
 # ---------------------------------------------------------------------------
-# Low-level load/save
+# localStorage keys
 # ---------------------------------------------------------------------------
+LS_USERNAME = "study_assistant_username"
+LS_HISTORY = "study_assistant_history"
+LS_FAVORITES = "study_assistant_favorites"
 
-def _ensure_data_file():
-    """Create data/history.json with default content if it doesn't exist."""
-    os.makedirs(_DATA_DIR, exist_ok=True)
-    if not os.path.exists(_DATA_FILE):
-        _write_data(dict(_DEFAULT_DATA))
+MAX_HISTORY_ITEMS = 10
 
 
-def _read_data() -> dict:
+# ---------------------------------------------------------------------------
+# Developer usage log (Google Form webhook)
+# ---------------------------------------------------------------------------
+# Replace these with your own Form's action URL + entry IDs.
+_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdta0n2805kNlOtWE9AAnVQntiTBz16DMutH5rdAY2FXvGbvA/formResponse"
+_FORM_ENTRY_NAME = "entry.427107502"
+_FORM_ENTRY_TOPIC = "entry.1511327583"
+_LOG_TIMEOUT = 3  # seconds
+
+
+def log_event(name: str, topic: str) -> None:
     """
-    Load data/history.json. Returns a default empty structure if the file
-    is missing, unreadable, or corrupted -- never raises.
+    Best-effort log of a search event to the developer's Google Form.
 
-    Any missing keys (e.g. an older history.json without "username") are
-    backfilled with defaults, so the rest of the app can always rely on
-    "history", "favorites", and "username" being present.
+    Never raises and never blocks the UI for long -- any failure
+    (network error, timeout, blocked domain, etc.) is silently ignored.
     """
-    _ensure_data_file()
     try:
-        with open(_DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return dict(_DEFAULT_DATA)
-
-    if not isinstance(data, dict):
-        return dict(_DEFAULT_DATA)
-
-    data.setdefault("history", [])
-    data.setdefault("favorites", [])
-    data.setdefault("username", "")
-
-    if not isinstance(data["history"], list):
-        data["history"] = []
-    if not isinstance(data["favorites"], list):
-        data["favorites"] = []
-    if not isinstance(data["username"], str):
-        data["username"] = ""
-
-    return data
-
-
-def _write_data(data: dict) -> bool:
-    """Write data to data/history.json. Returns True on success."""
-    os.makedirs(_DATA_DIR, exist_ok=True)
-    try:
-        with open(_DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        return True
-    except OSError:
-        return False
+        requests.post(
+            _FORM_URL,
+            data={
+                _FORM_ENTRY_NAME: (name or "").strip(),
+                _FORM_ENTRY_TOPIC: (topic or "").strip(),
+            },
+            timeout=_LOG_TIMEOUT,
+        )
+    except requests.exceptions.RequestException:
+        pass
 
 
 # ---------------------------------------------------------------------------
-# History
+# localStorage setup
 # ---------------------------------------------------------------------------
 
-def get_history():
-    import streamlit as st
+def init_local_storage() -> LocalStorage:
+    """
+    Initialize (or fetch) the LocalStorage component for this session.
 
-    if "history" not in st.session_state:
-        st.session_state.history = []
+    Must be called once before any of the get_*/set_* helpers below.
+    Stores the component instance in st.session_state so it isn't
+    re-initialized on every rerun.
+    """
+    if "_local_storage" not in st.session_state:
+        st.session_state._local_storage = LocalStorage(key="study_assistant_storage")
+    return st.session_state._local_storage
 
-    return st.session_state.history
+
+def _ls() -> LocalStorage:
+    return st.session_state._local_storage
 
 
-def add_to_history(topic, difficulty, study_mode):
-    import streamlit as st
+def _get_json(item_key: str, default):
+    """Read a JSON-encoded value from localStorage, with a safe default."""
+    raw = _ls().getItem(item_key)
+    if raw is None or raw == "":
+        return default
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return default
 
-    if "history" not in st.session_state:
-        st.session_state.history = []
 
-    entry = {
-        "topic": topic,
-        "difficulty": difficulty,
-        "study_mode": study_mode
-    }
+def _set_json(item_key: str, value, ls_key: str) -> None:
+    """
+    Write a JSON-encoded value to localStorage.
 
-    st.session_state.history = [
-        item for item in st.session_state.history
-        if item.get("topic") != topic
+    NOTE: streamlit-local-storage's setItem() ignores empty strings, so
+    we always write through json.dumps() -- even an empty list becomes
+    the non-empty string "[]", which IS written correctly.
+    """
+    _ls().setItem(item_key, json.dumps(value), key=ls_key)
+
+
+# ---------------------------------------------------------------------------
+# Username (per-device onboarding)
+# ---------------------------------------------------------------------------
+
+def get_username() -> str:
+    """Return the saved username for this device, or "" if not set yet."""
+    value = _ls().getItem(LS_USERNAME)
+    return value or ""
+
+
+def set_username(name: str) -> None:
+    """Save the username for this device (persists across visits)."""
+    name = (name or "").strip()
+    if not name:
+        return
+    _ls().setItem(LS_USERNAME, name, key="set_username")
+
+
+# ---------------------------------------------------------------------------
+# History (per-device)
+# ---------------------------------------------------------------------------
+
+def get_history() -> list:
+    """Return this device's search history, most-recent-first."""
+    return _get_json(LS_HISTORY, [])
+
+
+def add_to_history(topic: str, difficulty: str, study_mode: str) -> None:
+    """
+    Add/move `topic` to the front of this device's history.
+    De-duplicated case-insensitively, capped at MAX_HISTORY_ITEMS.
+    """
+    history = get_history()
+
+    history = [
+        item for item in history
+        if (item.get("topic") or "").strip().lower() != topic.strip().lower()
     ]
 
-    st.session_state.history.insert(0, entry)
+    history.insert(0, {
+        "topic": topic,
+        "difficulty": difficulty,
+        "study_mode": study_mode,
+    })
 
-    st.session_state.history = st.session_state.history[:10]
+    history = history[:MAX_HISTORY_ITEMS]
+    _set_json(LS_HISTORY, history, ls_key="set_history")
 
 
-def clear_history():
-    import streamlit as st
-    st.session_state.history = []
+def clear_history() -> None:
+    """Clear this device's search history."""
+    _set_json(LS_HISTORY, [], ls_key="clear_history")
 
 
 # ---------------------------------------------------------------------------
-# Favorites
+# Favorites (per-device)
 # ---------------------------------------------------------------------------
-def get_favorites():
-    import streamlit as st
 
-    if "favorites" not in st.session_state:
-        st.session_state.favorites = []
-
-    return st.session_state.favorites
+def get_favorites() -> list:
+    """Return this device's favorites."""
+    return _get_json(LS_FAVORITES, [])
 
 
-def is_favorite(topic):
-    import streamlit as st
-
-    if "favorites" not in st.session_state:
-        st.session_state.favorites = []
-
+def is_favorite(topic: str) -> bool:
+    topic = (topic or "").strip().lower()
     return any(
-        item.get("topic") == topic
-        for item in st.session_state.favorites
+        (item.get("topic") or "").strip().lower() == topic
+        for item in get_favorites()
     )
 
-def toggle_favorite(topic, difficulty, study_mode):
-    import streamlit as st
 
-    if "favorites" not in st.session_state:
-        st.session_state.favorites = []
+def toggle_favorite(topic: str, difficulty: str, study_mode: str) -> None:
+    """Add `topic` to favorites if absent, remove it if present."""
+    favorites = get_favorites()
+    topic_norm = (topic or "").strip().lower()
 
     existing = next(
-        (
-            item
-            for item in st.session_state.favorites
-            if item.get("topic") == topic
-        ),
-        None
+        (item for item in favorites if (item.get("topic") or "").strip().lower() == topic_norm),
+        None,
     )
 
     if existing:
-        st.session_state.favorites.remove(existing)
+        favorites = [item for item in favorites if item is not existing]
     else:
-        st.session_state.favorites.append({
+        favorites.append({
             "topic": topic,
             "difficulty": difficulty,
-            "study_mode": study_mode
+            "study_mode": study_mode,
         })
+
+    _set_json(LS_FAVORITES, favorites, ls_key="set_favorites")
 
 
 def remove_favorite(topic: str) -> None:
     """Remove a topic from favorites, if present."""
-    topic = (topic or "").strip().lower()
-    if not topic:
+    topic_norm = (topic or "").strip().lower()
+    if not topic_norm:
         return
-    data = _read_data()
-    data["favorites"] = [
-        item for item in data["favorites"]
-        if item.get("topic", "").strip().lower() != topic
+    favorites = [
+        item for item in get_favorites()
+        if (item.get("topic") or "").strip().lower() != topic_norm
     ]
-    _write_data(data)
-
-
-# ---------------------------------------------------------------------------
-# Username (onboarding / welcome flow)
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
-
+    _set_json(LS_FAVORITES, favorites, ls_key="remove_favorite")
 
 
 # ---------------------------------------------------------------------------

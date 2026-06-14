@@ -49,10 +49,16 @@ inject_custom_css()
 
 
 # ---------------------------------------------------------------------------
+# Per-device local storage (username, history, favorites)
+# ---------------------------------------------------------------------------
+storage.init_local_storage()
+
+
+# ---------------------------------------------------------------------------
 # Session state initialization
 # ---------------------------------------------------------------------------
 if "username" not in st.session_state:
-    st.session_state.username = None
+    st.session_state.username = storage.get_username() or None
 
 if "bhabhi_mode" not in st.session_state:
     st.session_state.bhabhi_mode = (
@@ -89,8 +95,9 @@ if "generation_error" not in st.session_state:
 if not st.session_state.username:
     submitted_name = C.render_onboarding()
     if submitted_name:
-        
+
         st.session_state.username = submitted_name
+        storage.set_username(submitted_name)
         st.session_state.bhabhi_mode = storage.is_bhabhi_mode(submitted_name)
         st.rerun()
     st.stop()
@@ -127,6 +134,7 @@ def _run_generation(topic: str) -> None:
         }
         st.session_state.generation_error = None
         storage.add_to_history(topic, st.session_state.difficulty, st.session_state.study_mode)
+        storage.log_event(st.session_state.username, topic)
         # Always land on the Explanation tab for a freshly generated topic.
         st.session_state["main_tabs"] = "📘 Explanation"
     else:
