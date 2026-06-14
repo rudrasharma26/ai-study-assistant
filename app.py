@@ -148,29 +148,20 @@ if st.session_state.bhabhi_mode and not st.session_state.bhabhi_revealed:
 # Generation helper (shared by the search form and the retry button)
 # ---------------------------------------------------------------------------
 def _run_generation(topic: str) -> None:
-    difficulty = st.session_state.difficulty
-    study_mode = st.session_state.study_mode
-
-    # Reuse a recent result for the exact same topic/difficulty/mode on
-    # this device instead of calling the API again.
-    cached_raw = storage.get_cached_result(topic, difficulty, study_mode)
-    if cached_raw is not None:
-        success, data = True, cached_raw
-    else:
-        success, data = ai_handler.generate_study_material(topic, difficulty, study_mode)
+    success, data = ai_handler.generate_study_material(
+        topic, st.session_state.difficulty, st.session_state.study_mode
+    )
 
     if success:
         st.session_state.current_topic = topic
         st.session_state.current_result = parse_study_material(data)
         st.session_state.current_settings = {
-            "difficulty": difficulty,
-            "study_mode": study_mode,
+            "difficulty": st.session_state.difficulty,
+            "study_mode": st.session_state.study_mode,
         }
         st.session_state.generation_error = None
-        storage.add_to_history(topic, difficulty, study_mode)
+        storage.add_to_history(topic, st.session_state.difficulty, st.session_state.study_mode)
         storage.log_event(st.session_state.username, topic)
-        if cached_raw is None:
-            storage.cache_result(topic, difficulty, study_mode, data)
         # Always land on the Explanation tab for a freshly generated topic.
         st.session_state["main_tabs"] = "📘 Explanation"
     else:
@@ -267,3 +258,26 @@ if st.session_state.generation_error:
 # ---------------------------------------------------------------------------
 result = st.session_state.current_result
 topic = st.session_state.current_topic
+
+if result:
+    settings = st.session_state.current_settings
+
+    header_col, fav_col = st.columns([5, 1])
+    with header_col:
+        st.markdown(f"## 📖 Study Material: {topic}")
+        st.caption(
+            f"Difficulty: {settings.get('difficulty', '')} • "
+            f"Study Mode: {settings.get('study_mode', '')}"
+        )
+    with fav_col:
+        st.markdown("<div style='height: 1.6rem;'></div>", unsafe_allow_html=True)
+        is_fav = storage.is_favorite(topic)
+        if C.render_favorite_toggle(topic, is_fav):
+            storage.toggle_favorite(
+                topic, settings.get("difficulty", ""), settings.get("study_mode", "")
+            )
+            st.rerun()
+
+    C.render_export_row(
+        result, topic, settings.get("difficulty", ""), settings.get("study_mode", "")
+    )
