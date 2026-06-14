@@ -281,3 +281,24 @@ if result:
     C.render_export_row(
         result, topic, settings.get("difficulty", ""), settings.get("study_mode", "")
     )
+
+    # --- TEMP DEBUG --- remove after diagnosing
+    try:
+        selected_tab = C.render_tab_nav(key="main_tabs")
+
+        if selected_tab == "Explanation":
+            C.render_section_card("Explanation", "📘", result["explanation"], key="explanation")
+        elif selected_tab == "Summary":
+            C.render_section_card("Summary", "📝", result["summary"], key="summary")
+        elif selected_tab == "Important Points":
+            C.render_section_card("Important Points", "⭐", result["important_points"], key="important_points")
+        elif selected_tab == "Quiz":
+            C.render_quiz(result["quiz"], topic=topic)
+    except Exception as e:
+        import traceback
+        st.error(f"DEBUG ERROR: {e}")
+        st.code(traceback.format_exc())
+    # --- END TEMP DEBUG ---
+
+else:
+    st.info("👆 Enter a topic above (or pick one of the suggestions) to get started.")
