@@ -51,18 +51,23 @@ inject_custom_css()
 # ---------------------------------------------------------------------------
 # Per-device persistent storage (username, history, favorites via cookies)
 # ---------------------------------------------------------------------------
-# CookieManager only returns real browser cookies after a couple of
-# reruns (its first render(s) return an empty default). Rerun a few times
-# until cookies are loaded, capped so a genuinely new device (zero
-# cookies, so _cookies_loaded never flips True) doesn't loop forever.
+# CookieManager's getAll() can return our app's cookies INCREMENTALLY
+# across the first few renders of a fresh page load (e.g. the username
+# cookie shows up one render before the history/favorites cookies do).
+# To avoid reading a partially-populated cookie jar, force a fixed number
+# of reruns before treating storage.init_storage()'s result as final.
+_COOKIE_LOAD_RERUNS = 3
+
 if "_cookie_load_attempts" not in st.session_state:
     st.session_state._cookie_load_attempts = 0
 
 storage.init_storage()
 
-if not st.session_state.get("_cookies_loaded") and st.session_state._cookie_load_attempts < 3:
+if st.session_state._cookie_load_attempts < _COOKIE_LOAD_RERUNS:
     st.session_state._cookie_load_attempts += 1
     st.rerun()
+else:
+    st.session_state._cookies_loaded = True
 
 
 # ---------------------------------------------------------------------------

@@ -53,14 +53,8 @@ import extra_streamlit_components as stx
 CK_USERNAME = "study_assistant_username"
 CK_HISTORY = "study_assistant_history"
 CK_FAVORITES = "study_assistant_favorites"
-CK_CACHE = "study_assistant_cache"
 
 MAX_HISTORY_ITEMS = 10
-
-# How many full generated results to keep cached per device. Kept small
-# because each cached entry stores the full raw AI response text, and
-# cookies have a practical size limit (~4KB).
-MAX_CACHE_ITEMS = 2
 
 # How long these cookies last (persists across visits on the same browser).
 _COOKIE_EXPIRY_DAYS = 365
@@ -110,11 +104,12 @@ def init_storage() -> "stx.CookieManager":
     NOTE: declare_component-based components (like CookieManager) return
     a `default` value on their first render and only return the real
     value (here, the actual browser cookies) after the frontend responds
-    and the script reruns. So: keep re-invoking CookieManager(key=...)
-    with the SAME key on each rerun until it returns a non-empty cookie
-    jar (or we've already confirmed cookies are loaded), THEN cache it.
-    Re-invoking with the same key is cheap -- Streamlit reuses the same
-    component instance.
+    and the script reruns. Even after that, getAll() can return our app's
+    cookies INCREMENTALLY across renders (e.g. username appears on render
+    2, but history/favorites only appear on render 3) -- so we must NOT
+    mark cookies as "loaded" just because ONE of our keys showed up.
+    Instead, app.py does a fixed number of reruns (see _COOKIE_LOAD_RERUNS)
+    before treating the cookie jar as final.
     """
     if st.session_state.get("_cookies_loaded"):
         if "_cookie_manager" not in st.session_state:
@@ -122,8 +117,6 @@ def init_storage() -> "stx.CookieManager":
         return st.session_state._cookie_manager
 
     manager = stx.CookieManager(key="study_assistant_cookies")
-    if manager.cookies:
-        st.session_state._cookies_loaded = True
     st.session_state._cookie_manager = manager
     return manager
 
@@ -209,46 +202,6 @@ def add_to_history(topic: str, difficulty: str, study_mode: str) -> None:
 def clear_history() -> None:
     """Clear this device's search history."""
     _set_json(CK_HISTORY, [], set_key="clear_history")
-
-
-# ---------------------------------------------------------------------------
-# Result cache (per-device)
-# ---------------------------------------------------------------------------
-# Avoids re-calling the AI API for a topic/difficulty/study_mode
-# combination that was already generated recently on this device.
-# Stores the raw AI response text so it can be re-parsed exactly as if
-# it had just come back from the API.
-
-def _cache_key(topic: str, difficulty: str, study_mode: str) -> str:
-    return f"{(topic or '').strip().lower()}|{difficulty}|{study_mode}"
-
-
-def get_cached_result(topic: str, difficulty: str, study_mode: str):
-    """
-    Return the cached raw AI response text for this exact
-    topic/difficulty/study_mode combination, or None if not cached.
-    """
-    cache = _get_json(CK_CACHE, [])
-    key = _cache_key(topic, difficulty, study_mode)
-    for entry in cache:
-        if entry.get("key") == key:
-            return entry.get("raw")
-    return None
-
-
-def cache_result(topic: str, difficulty: str, study_mode: str, raw: str) -> None:
-    """
-    Save a generated result to this device's cache, most-recent-first,
-    capped at MAX_CACHE_ITEMS.
-    """
-    cache = _get_json(CK_CACHE, [])
-    key = _cache_key(topic, difficulty, study_mode)
-
-    cache = [entry for entry in cache if entry.get("key") != key]
-    cache.insert(0, {"key": key, "raw": raw})
-    cache = cache[:MAX_CACHE_ITEMS]
-
-    _set_json(CK_CACHE, cache, set_key="set_cache")
 
 
 # ---------------------------------------------------------------------------
