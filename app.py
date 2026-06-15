@@ -5,11 +5,13 @@ AI Study Assistant -- main entrypoint.
 
 Flow:
 1. Page config + global CSS injection.
-2. Session-state initialization (username, bhabhi mode, settings, results).
-3. Onboarding gate: ask for the user's name if not yet known.
-4. Secret "Bhabhi Mode" gate: a one-time romantic reveal screen for a small
+2. Per-device storage init (device ID via URL query param + server-side
+   JSON file -- see utils/storage.py for why this replaced cookies).
+3. Session-state initialization (username, bhabhi mode, settings, results).
+4. Onboarding gate: ask for the user's name if not yet known.
+5. Secret "Bhabhi Mode" gate: a one-time romantic reveal screen for a small
    list of recognized names (see utils.storage.is_bhabhi_mode).
-5. Main app: sidebar (settings, favorites, history), hero, dynamic topic
+6. Main app: sidebar (settings, favorites, history), hero, dynamic topic
    chips, search form (Enter-to-submit), generation with animated loading
    and structured error handling, and the tabbed study-material display
    (Explanation / Summary / Important Points / Quiz).
@@ -49,38 +51,19 @@ inject_custom_css()
 
 
 # ---------------------------------------------------------------------------
-# Per-device persistent storage (username, history, favorites via cookies)
+# Per-device storage init
 # ---------------------------------------------------------------------------
-# CookieManager's getAll() can return our app's cookies INCREMENTALLY
-# across the first few renders of a fresh page load (e.g. the username
-# cookie shows up one render before the history/favorites cookies do).
-# To avoid reading a partially-populated cookie jar, force a fixed number
-# of reruns before treating storage.init_storage()'s result as final.
-_COOKIE_LOAD_RERUNS = 3
-
-if "_cookie_load_attempts" not in st.session_state:
-    st.session_state._cookie_load_attempts = 0
-
+# Assigns/reads a `device` ID from the URL's query params (synchronous,
+# no component round trip -- see utils/storage.py for details). All
+# username/history/favorites reads below are fully synchronous and
+# correct on the very first run, every time.
 storage.init_storage()
-
-if st.session_state._cookie_load_attempts < _COOKIE_LOAD_RERUNS:
-    st.session_state._cookie_load_attempts += 1
-    st.rerun()
-else:
-    st.session_state._cookies_loaded = True
 
 
 # ---------------------------------------------------------------------------
 # Session state initialization
 # ---------------------------------------------------------------------------
 if "username" not in st.session_state:
-    st.session_state.username = None
-
-# Once cookies are confirmed loaded, sync username from the cookie if we
-# don't already have one in session_state (handles the case where
-# session_state.username was set to None on an earlier run, before the
-# cookie value was available).
-if st.session_state.get("_cookies_loaded") and not st.session_state.username:
     st.session_state.username = storage.get_username() or None
 
 if "bhabhi_mode" not in st.session_state:
@@ -89,8 +72,6 @@ if "bhabhi_mode" not in st.session_state:
         if st.session_state.username
         else False
     )
-elif st.session_state.username and not st.session_state.bhabhi_mode:
-    st.session_state.bhabhi_mode = storage.is_bhabhi_mode(st.session_state.username)
 
 if "bhabhi_revealed" not in st.session_state:
     st.session_state.bhabhi_revealed = False
@@ -120,19 +101,11 @@ if "generation_error" not in st.session_state:
 if not st.session_state.username:
     submitted_name = C.render_onboarding()
     if submitted_name:
-
         st.session_state.username = submitted_name
         storage.set_username(submitted_name)
         st.session_state.bhabhi_mode = storage.is_bhabhi_mode(submitted_name)
-        # No explicit st.rerun()/st.stop() here: form submission already
-        # triggers Streamlit's natural rerun, and ending the script early
-        # was aborting it before the cookie-set component call finished
-        # writing to the browser, so the username cookie never actually
-        # persisted. Falling through lets the rest of the app render on
-        # this same run (st.session_state.username is now set, so this
-        # block won't re-trigger).
-    else:
-        st.stop()
+        st.rerun()
+    st.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +140,15 @@ def _run_generation(topic: str) -> None:
         st.session_state.generation_error = None
         storage.add_to_history(topic, st.session_state.difficulty, st.session_state.study_mode)
         storage.log_event(st.session_state.username, topic)
-        # Always land on the Explanation tab for a freshly generated topic.
-        st.session_state["main_tabs"] = "📘 Explanation"
+
+        # Reset the tab bar to "Explanation" for a freshly generated topic.
+        # IMPORTANT: don't assign a value into st.session_state["main_tabs"]
+        # while the bound st.radio widget is still mounted -- Streamlit
+        # ignores/ misapplies that on the same run, which is what caused
+        # the "tabs/content stuck on the previous topic" bug. Instead,
+        # DELETE the key so the radio falls back to its default (first
+        # option = "Explanation") on the next render.
+        st.session_state.pop("main_tabs", None)
     else:
         st.session_state.generation_error = data
 
@@ -243,6 +223,11 @@ if submitted:
         _run_generation(topic)
 
         loading_placeholder.empty()
+
+        # _run_generation may have popped "main_tabs" from session_state
+        # so the tab bar resets to Explanation. That pop only takes
+        # effect cleanly on a fresh script run, so rerun once here.
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
