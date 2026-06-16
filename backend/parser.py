@@ -114,25 +114,116 @@ def parse_sections(raw_text: str) -> dict:
 # ---------------------------------------------------------------------------
 # Quiz parsing
 # ---------------------------------------------------------------------------
+#
+# Two formats are produced by Backend.prompts.build_prompt():
+#
+#   MCQ:
+#     **Q1 [MCQ]:** <question text>
+#     A) <option>
+#     B) <option>
+#     C) <option>
+#     D) <option>
+#     **Answer:** B
+#
+#   SHORT:
+#     **Q2 [SHORT]:** <question text>
+#     **Answer:** <answer text>
+#
+# Each parsed item is a dict:
+#   {"type": "mcq", "question": str, "options": {"A": ..., "B": ..., "C": ..., "D": ...}, "answer": "B"}
+#   {"type": "short", "question": str, "answer": str}
+#
+# Older raw text (no [MCQ]/[SHORT] tag, plain "**Q1:** ... **Answer:** ...")
+# is still supported and parsed as "short" -- so previously-generated
+# content (or a model that ignores the tag instruction) doesn't break.
 
-# Matches the strict format requested in prompts.py:
-#   **Q1:** question text
-#   **Answer:** answer text
-# Tolerant of "Q1.", "Q1)", missing bold, etc.
-_QUIZ_PATTERN = re.compile(
-    r'\*{0,2}Q\s*\d*\s*[:.)]?\*{0,2}\s*(.*?)\s*'
-    r'\*{0,2}Answer\s*[:.)]?\*{0,2}\s*(.*?)'
-    r'(?=\*{0,2}Q\s*\d*\s*[:.)]?\*{0,2}|\Z)',
+# Matches one question block, with an optional [MCQ]/[SHORT] tag, up to
+# (but not including) the next "**Q<n>" or the end of the text.
+_QUIZ_BLOCK_PATTERN = re.compile(
+    r'\*{0,2}Q\s*\d*\s*(?:\[\s*(MCQ|SHORT)\s*\])?\s*[:.)]?\*{0,2}\s*'
+    r'(.*?)'
+    r'(?=\*{0,2}Q\s*\d*\s*(?:\[\s*(?:MCQ|SHORT)\s*\])?\s*[:.)]?\*{0,2}|\Z)',
+    re.DOTALL | re.IGNORECASE,
+)
+
+# Within an MCQ block: pulls out "A) text" / "B) text" / etc. and the
+# final "**Answer:** <letter>" line.
+_MCQ_OPTION_PATTERN = re.compile(
+    r'^\s*\*{0,2}([A-D])[).]\s*\*{0,2}\s*(.+?)\s*$',
+    re.MULTILINE | re.IGNORECASE,
+)
+_MCQ_ANSWER_LETTER_PATTERN = re.compile(
+    r'\*{0,2}Answer\s*[:.)]?\*{0,2}\s*\(?([A-D])\)?',
+    re.IGNORECASE,
+)
+
+# Within a SHORT (or untagged) block: question text, then
+# "**Answer:** <free text>".
+_SHORT_ANSWER_PATTERN = re.compile(
+    r'^(.*?)\s*\*{0,2}Answer\s*[:.)]?\*{0,2}\s*(.*)$',
     re.DOTALL | re.IGNORECASE,
 )
 
 
+def _parse_mcq_block(body: str):
+    """
+    Parse an [MCQ]-tagged block body into
+    {"type": "mcq", "question": ..., "options": {...}, "answer": "A"},
+    or None if it doesn't look like a valid MCQ (missing options/answer).
+    """
+    # The question text is everything before the first "A) ..." option line.
+    first_option_match = _MCQ_OPTION_PATTERN.search(body)
+    if not first_option_match:
+        return None
+
+    question = body[:first_option_match.start()].strip()
+
+    options = {}
+    for letter, text in _MCQ_OPTION_PATTERN.findall(body):
+        options[letter.upper()] = text.strip()
+
+    answer_match = _MCQ_ANSWER_LETTER_PATTERN.search(body)
+    if not answer_match:
+        return None
+    answer_letter = answer_match.group(1).upper()
+
+    if not question or len(options) < 2 or answer_letter not in options:
+        return None
+
+    return {
+        "type": "mcq",
+        "question": question,
+        "options": options,
+        "answer": answer_letter,
+    }
+
+
+def _parse_short_block(body: str):
+    """
+    Parse a [SHORT]-tagged (or untagged, legacy) block body into
+    {"type": "short", "question": ..., "answer": ...}, or None if it
+    doesn't contain a recognizable "**Answer:** ..." split.
+    """
+    match = _SHORT_ANSWER_PATTERN.match(body)
+    if not match:
+        return None
+
+    question = match.group(1).strip()
+    answer = match.group(2).strip()
+
+    if not question or not answer:
+        return None
+
+    return {"type": "short", "question": question, "answer": answer}
+
+
 def parse_quiz(quiz_text: str) -> list:
     """
-    Parse the Quiz section into a list of {"question": str, "answer": str}.
+    Parse the Quiz section into a list of question dicts (see module-level
+    docstring above for the two shapes: "mcq" and "short").
 
-    Falls back to a single raw item if the strict Q/Answer format isn't
-    found, so the quiz tab never ends up empty when the model has actually
+    Falls back to a single raw item if no question blocks can be parsed,
+    so the quiz tab never ends up empty when the model has actually
     written *something* there.
     """
     quiz_text = (quiz_text or "").strip()
@@ -140,19 +231,34 @@ def parse_quiz(quiz_text: str) -> list:
         return []
 
     items = []
-    for question, answer in _QUIZ_PATTERN.findall(quiz_text):
-        question = question.strip()
-        answer = answer.strip()
-        if question and answer:
-            items.append({"question": question, "answer": answer})
+    for tag, body in _QUIZ_BLOCK_PATTERN.findall(quiz_text):
+        body = body.strip()
+        if not body:
+            continue
+
+        tag = (tag or "").strip().upper()
+        parsed = None
+
+        if tag == "MCQ":
+            parsed = _parse_mcq_block(body)
+        elif tag == "SHORT":
+            parsed = _parse_short_block(body)
+        else:
+            # No tag (legacy format): try MCQ first (in case the model
+            # added options without the tag), then fall back to short.
+            parsed = _parse_mcq_block(body) or _parse_short_block(body)
+
+        if parsed:
+            items.append(parsed)
 
     if items:
         return items
 
-    # Fallback: model didn't follow the Q/Answer format. Show the raw text
-    # as a single "question" so the user still sees content instead of
-    # an empty quiz tab.
+    # Fallback: model didn't follow the expected format at all. Show the
+    # raw text as a single "question" so the user still sees content
+    # instead of an empty quiz tab.
     return [{
+        "type": "short",
         "question": "Quiz (shown as provided by the AI)",
         "answer": quiz_text,
     }]

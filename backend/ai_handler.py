@@ -46,10 +46,11 @@ MODEL_NAME = "deepseek/deepseek-chat-v3-0324"
 REQUEST_TIMEOUT = 60  # seconds
 
 # Caps the AI's response length to keep token usage (and cost) bounded.
-# 2000 tokens is generous enough for a full Explanation + Summary +
-# Important Points + Quiz (even at "Exam Mode" with 6 quiz questions)
-# without ever cutting a study session short mid-section.
-MAX_RESPONSE_TOKENS = 2000
+# 3000 tokens is generous enough for a full Explanation + Summary +
+# Important Points + Quiz, including "Exam Mode" with 10 quiz questions
+# (5 MCQ with 4 options each + 5 short-answer), without ever cutting a
+# study session short mid-section.
+MAX_RESPONSE_TOKENS = 3000
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 

@@ -272,7 +272,8 @@ if result:
         result, topic, settings.get("difficulty", ""), settings.get("study_mode", "")
     )
 
-    selected_tab = C.render_tab_nav(key="main_tabs")
+    default_tab = "Quiz" if settings.get("study_mode") == "Exam Mode" else "Explanation"
+    selected_tab = C.render_tab_nav(key="main_tabs", default_option=default_tab)
 
     if selected_tab == "Explanation":
         C.render_section_card("Explanation", "📘", result["explanation"], key="explanation")

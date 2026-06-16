@@ -85,8 +85,68 @@ _STUDY_MODE_INSTRUCTIONS = {
 _QUIZ_QUESTION_COUNT = {
     "Learn Mode": 3,
     "Revision Mode": 4,
-    "Exam Mode": 6,
+    "Exam Mode": 10,
 }
+
+# For Exam Mode only: how many of the questions should be MCQ vs
+# short-answer. Other modes are all short-answer (no MCQ).
+_EXAM_MODE_MCQ_COUNT = 5
+_EXAM_MODE_SHORT_COUNT = 5
+
+
+def _build_quiz_instructions(study_mode: str, quiz_count: int) -> str:
+    """
+    Build the Quiz-section instructions for the prompt.
+
+    - Exam Mode: a fixed mix of MCQ and short-answer questions, using a
+      [MCQ]/[SHORT] tag on each question so Backend.parser can tell them
+      apart and Backend.ai_handler/frontend.components can render/grade
+      them differently (radio buttons + exact match for MCQ, free text +
+      AI grading for short answer).
+    - Learn Mode / Revision Mode: all short-answer, using the original
+      simple Q/Answer format (tagged [SHORT] for a single consistent
+      parser path).
+    """
+    if study_mode == "Exam Mode":
+        mcq_count = _EXAM_MODE_MCQ_COUNT
+        short_count = _EXAM_MODE_SHORT_COUNT
+        return f"""Create exactly {quiz_count} quiz questions: {mcq_count} multiple-choice
+questions (MCQ) followed by {short_count} short-answer questions. Format
+EVERY question EXACTLY like one of the two patterns below, with nothing
+else in between:
+
+MCQ pattern:
+**Q1 [MCQ]:** <question text>
+A) <option text>
+B) <option text>
+C) <option text>
+D) <option text>
+**Answer:** <the single correct letter, e.g. B>
+
+Short-answer pattern:
+**Q{mcq_count + 1} [SHORT]:** <question text>
+**Answer:** <answer text>
+
+Use the [MCQ] tag for questions {1} through {mcq_count}, and the [SHORT]
+tag for questions {mcq_count + 1} through {quiz_count}. Each MCQ MUST have
+exactly 4 options labeled A) B) C) D), with exactly one correct answer
+given as a single letter (A, B, C, or D) on the **Answer:** line -- nothing
+else on that line. Make the MCQs exam-style and slightly harder, with
+plausible distractors (wrong options that are common misconceptions, not
+obviously wrong)."""
+
+    return f"""Create exactly {quiz_count} quiz questions to test understanding of this
+topic. Format EVERY question and answer EXACTLY like this, with nothing else
+in between:
+
+**Q1 [SHORT]:** <question text>
+**Answer:** <answer text>
+
+**Q2 [SHORT]:** <question text>
+**Answer:** <answer text>
+
+(continue this exact Q/Answer pattern, using the [SHORT] tag, for all
+{quiz_count} questions)"""
 
 
 def build_prompt(topic: str, difficulty: str = DEFAULT_DIFFICULTY,
@@ -104,6 +164,7 @@ def build_prompt(topic: str, difficulty: str = DEFAULT_DIFFICULTY,
         study_mode, _STUDY_MODE_INSTRUCTIONS[DEFAULT_STUDY_MODE]
     )
     quiz_count = _QUIZ_QUESTION_COUNT.get(study_mode, 3)
+    quiz_instructions = _build_quiz_instructions(study_mode, quiz_count)
 
     topic = topic.strip()
 
@@ -132,17 +193,20 @@ A bulleted list of the most important facts, terms, or formulas. Use "-" for
 each bullet. No long paragraphs here.
 
 ### {SECTION_QUIZ}
-Create exactly {quiz_count} quiz questions to test understanding of this
-topic. Format EVERY question and answer EXACTLY like this, with nothing else
-in between:
+{quiz_instructions}
 
-**Q1:** <question text>
-**Answer:** <answer text>
-
-**Q2:** <question text>
-**Answer:** <answer text>
-
-(continue this exact Q/Answer pattern for all {quiz_count} questions)
+MATH AND FORMULA FORMATTING (applies to ALL sections above):
+- Whenever you write a mathematical expression, formula, or equation,
+  wrap it in Markdown math delimiters so it renders properly: use
+  single dollar signs for inline math, e.g. $E = mc^2$, and double
+  dollar signs on their own lines for standalone/block equations, e.g.
+  $$F = ma$$
+- Use standard LaTeX syntax inside the dollar signs (e.g. \\frac{{a}}{{b}},
+  \\vec{{v}}, x^2, \\sqrt{{x}}, \\sum, \\int).
+- NEVER write formulas inside square brackets like [ ... ] or as plain
+  text like (a) is acceleration -- always use $...$ or $$...$$ instead.
+- For topics with no math, simply don't use math notation -- don't force
+  formulas where they don't belong.
 
 FORMATTING RULES:
 - Use the exact "### " headers shown above, spelled exactly as given.

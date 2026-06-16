@@ -290,7 +290,7 @@ SECTION_TAB_ICONS = {
 }
 
 
-def render_tab_nav(options=None, key: str = "main_tabs", icons: dict = None) -> str:
+def render_tab_nav(options=None, key: str = "main_tabs", icons: dict = None, default_option: str = None) -> str:
     """
     Render a pill-style tab bar built on st.radio(horizontal=True).
 
@@ -298,6 +298,11 @@ def render_tab_nav(options=None, key: str = "main_tabs", icons: dict = None) -> 
     st.session_state[key] and survives reruns -- so clicking "Reveal Answer"
     or "Check Answer" inside the Quiz tab no longer jumps back to the
     Explanation tab.
+
+    `default_option` (e.g. "Quiz") controls which tab is selected when
+    st.session_state[key] doesn't exist yet (i.e. right after app.py pops
+    the key to reset the tab bar for a freshly generated topic). Falls
+    back to the first option (Explanation) if not given or not found.
 
     Returns the currently selected option (e.g. "Explanation").
     """
@@ -307,14 +312,31 @@ def render_tab_nav(options=None, key: str = "main_tabs", icons: dict = None) -> 
     labels = [f"{icons.get(opt, '')} {opt}".strip() for opt in options]
     label_to_option = dict(zip(labels, options))
 
+    default_index = 0
+    if default_option in options:
+        default_index = options.index(default_option)
+
     with st.container(key="main-tabs"):
-        selected_label = st.radio(
-            "Section",
-            labels,
-            key=key,
-            horizontal=True,
-            label_visibility="collapsed",
-        )
+        if key in st.session_state:
+            # Widget already has a stored selection -- let it persist
+            # across reruns as normal (don't pass index, which would
+            # override the user's current tab choice).
+            selected_label = st.radio(
+                "Section",
+                labels,
+                key=key,
+                horizontal=True,
+                label_visibility="collapsed",
+            )
+        else:
+            selected_label = st.radio(
+                "Section",
+                labels,
+                key=key,
+                horizontal=True,
+                label_visibility="collapsed",
+                index=default_index,
+            )
 
     return label_to_option.get(selected_label, options[0])
 
@@ -537,10 +559,19 @@ def render_quiz(quiz_items: list, topic: str = "default"):
     Render the interactive quiz: a Reveal/Attempt mode toggle, then a glass
     card per question.
 
-    In Attempt Mode, the student's free-text answer is graded via
-    Backend.ai_handler.grade_quiz_answer(), which tolerates paraphrasing and
-    falls back to a local heuristic if the AI call isn't available -- so
-    this never "feels broken" even offline.
+    Each item is either:
+      {"type": "mcq", "question": ..., "options": {"A":..,"B":..,"C":..,"D":..}, "answer": "B"}
+      {"type": "short", "question": ..., "answer": ...}
+
+    In Attempt Mode:
+      - MCQ questions are graded instantly by exact letter match (no API
+        call needed).
+      - Short-answer questions are graded via
+        Backend.ai_handler.grade_quiz_answer(), which tolerates
+        paraphrasing and falls back to a local heuristic if the AI call
+        isn't available.
+    A running score summary (X / Y correct, with weak topics) is shown
+    once the student has attempted at least one question.
     """
     if not quiz_items:
         st.info("No quiz questions were generated for this topic. Try generating again.")
@@ -557,17 +588,29 @@ def render_quiz(quiz_items: list, topic: str = "default"):
         label_visibility="collapsed",
     )
 
+    is_attempt_mode = mode.startswith("✍️")
+
     for i, item in enumerate(quiz_items):
         question = item.get("question", "")
-        answer = item.get("answer", "")
+        item_type = item.get("type", "short")
 
         with st.container(border=True):
             st.markdown(f"**Q{i + 1}.** {question}")
 
-            if mode.startswith("📖"):
-                _render_reveal_mode(topic_slug, i, answer)
+            if item_type == "mcq":
+                if is_attempt_mode:
+                    _render_mcq_attempt(topic_slug, i, item)
+                else:
+                    _render_mcq_reveal(topic_slug, i, item)
             else:
-                _render_attempt_mode(topic_slug, i, question, answer)
+                answer = item.get("answer", "")
+                if is_attempt_mode:
+                    _render_attempt_mode(topic_slug, i, question, answer)
+                else:
+                    _render_reveal_mode(topic_slug, i, answer)
+
+    if is_attempt_mode:
+        _render_score_summary(topic_slug, quiz_items)
 
 
 def _render_reveal_mode(topic_slug: str, index: int, answer: str):
@@ -580,6 +623,27 @@ def _render_reveal_mode(topic_slug: str, index: int, answer: str):
 
     if st.session_state.get(reveal_key, False):
         st.markdown(f"**Answer:** {answer}")
+
+
+def _render_mcq_reveal(topic_slug: str, index: int, item: dict):
+    """Reveal Mode for an MCQ question: list options, then reveal the
+    correct one on demand."""
+    options = item.get("options") or {}
+    for letter in ("A", "B", "C", "D"):
+        if letter in options:
+            st.markdown(f"&nbsp;&nbsp;**{letter})** {options[letter]}")
+
+    reveal_key = f"quiz_reveal_{topic_slug}_{index}"
+    is_revealed = st.session_state.get(reveal_key, False)
+
+    button_label = "🙈 Hide Answer" if is_revealed else "👁️ Reveal Answer"
+    if st.button(button_label, key=f"{reveal_key}_btn"):
+        st.session_state[reveal_key] = not is_revealed
+
+    if st.session_state.get(reveal_key, False):
+        correct_letter = item.get("answer", "")
+        correct_text = options.get(correct_letter, "")
+        st.markdown(f"**Answer:** {correct_letter}) {correct_text}")
 
 
 def _render_attempt_mode(topic_slug: str, index: int, question: str, answer: str):
@@ -614,6 +678,105 @@ def _render_attempt_mode(topic_slug: str, index: int, question: str, answer: str
             unsafe_allow_html=True,
         )
         st.markdown(f"**Reference Answer:** {answer}")
+
+
+def _render_mcq_attempt(topic_slug: str, index: int, item: dict):
+    """
+    Attempt Mode for an MCQ question: radio buttons for A-D, graded
+    instantly by exact letter match (no API call needed).
+    """
+    options = item.get("options") or {}
+    correct_letter = item.get("answer", "")
+
+    choice_key = f"quiz_mcq_choice_{topic_slug}_{index}"
+    result_key = f"quiz_result_{topic_slug}_{index}"
+
+    option_labels = [f"{letter}) {text}" for letter, text in options.items() if letter in ("A", "B", "C", "D")]
+    letters_in_order = [letter for letter in ("A", "B", "C", "D") if letter in options]
+
+    selected_label = st.radio(
+        "Your answer",
+        option_labels,
+        key=choice_key,
+        label_visibility="collapsed",
+        index=None,
+    )
+
+    check_clicked = st.button("✅ Check Answer", key=f"{result_key}_btn")
+
+    if check_clicked:
+        if selected_label is None:
+            st.session_state[result_key] = "empty"
+        else:
+            selected_index = option_labels.index(selected_label)
+            selected_letter = letters_in_order[selected_index]
+            st.session_state[result_key] = (
+                "correct" if selected_letter == correct_letter else "incorrect"
+            )
+
+    result = st.session_state.get(result_key)
+    if isinstance(result, str):
+        if result == "empty":
+            st.markdown(
+                '<div class="quiz-reaction quiz-empty">✍️ Please select an option first.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            emoji, css_class = _QUIZ_REACTION_META.get(result, _QUIZ_REACTION_META["incorrect"])
+            feedback = "Correct! Nice work." if result == "correct" else "Not quite -- check the correct answer below."
+            st.markdown(
+                f'<div class="quiz-reaction {css_class}">{emoji} {html.escape(feedback)}</div>',
+                unsafe_allow_html=True,
+            )
+            correct_text = options.get(correct_letter, "")
+            st.markdown(f"**Correct Answer:** {correct_letter}) {correct_text}")
+
+
+def _render_score_summary(topic_slug: str, quiz_items: list):
+    """
+    After attempting questions, show an X / Y score summary plus a list
+    of weak topics (questions answered incorrectly), so the student gets
+    a quick overview of how they did. Only counts questions that have
+    actually been checked (have a result in session_state).
+    """
+    attempted = 0
+    correct = 0
+    weak_questions = []
+
+    for i, item in enumerate(quiz_items):
+        result_key = f"quiz_result_{topic_slug}_{i}"
+        result = st.session_state.get(result_key)
+
+        if result is None or result == "pending":
+            continue
+
+        if item.get("type") == "mcq":
+            verdict = result if isinstance(result, str) else None
+        else:
+            verdict = result.get("verdict") if isinstance(result, dict) else None
+
+        if verdict not in ("correct", "partial", "incorrect"):
+            continue
+
+        attempted += 1
+        if verdict == "correct":
+            correct += 1
+        else:
+            weak_questions.append(item.get("question", ""))
+
+    if attempted == 0:
+        return
+
+    total = len(quiz_items)
+    st.markdown("---")
+    st.markdown(f"### 📊 Score: {correct} / {attempted} correct" + (f" (of {total} questions)" if attempted < total else ""))
+
+    if weak_questions:
+        with st.expander(f"⚠️ Topics to review ({len(weak_questions)})"):
+            for q in weak_questions:
+                st.markdown(f"- {q}")
+    elif attempted == total:
+        st.markdown("🎉 Great job -- you got everything right!")
 
 
 # ---------------------------------------------------------------------------

@@ -119,7 +119,7 @@ section.main > div {
    HERO SECTION  (components.render_hero -> key="hero-section")
    ========================================================================== */
 .st-key-hero-section {
-    text-align: center;
+    text-align: left;
     padding: 1.5rem 1rem 0.5rem;
     animation: fadeInUp 0.7s ease;
 }
@@ -127,7 +127,7 @@ section.main > div {
 .hero-icon-wrapper {
     width: 96px;
     height: 96px;
-    margin: 0 auto 0.75rem;
+    margin: 0 0 0.75rem;
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -155,7 +155,7 @@ section.main > div {
     color: var(--text-secondary);
     font-size: 1.05rem;
     max-width: 560px;
-    margin: 0 auto 0.5rem;
+    margin: 0 0 0.5rem;
     line-height: 1.6;
 }
 

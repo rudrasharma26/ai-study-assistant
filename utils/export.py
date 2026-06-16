@@ -64,6 +64,31 @@ def _section_or_placeholder(text: str) -> str:
     return text if text else "(No content generated for this section.)"
 
 
+def _quiz_item_lines(item: dict) -> list:
+    """
+    Return a list of plain-text lines representing one quiz item
+    (question + options if MCQ + answer), for use in TXT/PDF export.
+    Does not include the leading "Q{i}." -- callers prepend that.
+    """
+    lines = [item.get("question", "")]
+
+    if item.get("type") == "mcq":
+        options = item.get("options") or {}
+        for letter in ("A", "B", "C", "D"):
+            if letter in options:
+                lines.append(f"  {letter}) {options[letter]}")
+        correct_letter = item.get("answer", "")
+        correct_text = options.get(correct_letter, "")
+        if correct_text:
+            lines.append(f"Answer: {correct_letter}) {correct_text}")
+        else:
+            lines.append(f"Answer: {correct_letter}")
+    else:
+        lines.append(f"Answer: {item.get('answer', '')}")
+
+    return lines
+
+
 def _line(pdf: FPDF, height: float, text: str) -> None:
     """
     multi_cell() wrapper that always resets the cursor back to the left
@@ -116,8 +141,9 @@ def to_txt(parsed: dict, topic: str, difficulty: str = "", study_mode: str = "")
     quiz = parsed.get("quiz") or []
     if quiz:
         for i, item in enumerate(quiz, 1):
-            lines.append(f"Q{i}. {item.get('question', '')}")
-            lines.append(f"Answer: {item.get('answer', '')}")
+            item_lines = _quiz_item_lines(item)
+            lines.append(f"Q{i}. {item_lines[0]}")
+            lines.extend(item_lines[1:])
             lines.append("")
     else:
         lines.append("(No quiz generated.)")
@@ -197,13 +223,16 @@ def to_pdf(parsed: dict, topic: str, difficulty: str = "", study_mode: str = "")
     quiz = parsed.get("quiz") or []
     if quiz:
         for i, item in enumerate(quiz, 1):
+            item_lines = _quiz_item_lines(item)
+
             pdf.set_font("Helvetica", "B", 10.5)
             pdf.set_text_color(40, 40, 40)
-            _line(pdf, 6, _pdf_safe(f"Q{i}. {item.get('question', '')}"))
+            _line(pdf, 6, _pdf_safe(f"Q{i}. {item_lines[0]}"))
 
             pdf.set_font("Helvetica", "", 10.5)
             pdf.set_text_color(70, 70, 70)
-            _line(pdf, 6, _pdf_safe(f"Answer: {item.get('answer', '')}"))
+            for extra_line in item_lines[1:]:
+                _line(pdf, 6, _pdf_safe(extra_line))
             pdf.ln(2)
     else:
         pdf.set_font("Helvetica", "", 10.5)
