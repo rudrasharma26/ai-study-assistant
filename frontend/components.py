@@ -299,10 +299,12 @@ def render_tab_nav(options=None, key: str = "main_tabs", icons: dict = None, def
     or "Check Answer" inside the Quiz tab no longer jumps back to the
     Explanation tab.
 
-    `default_option` (e.g. "Quiz") controls which tab is selected when
-    st.session_state[key] doesn't exist yet (i.e. right after app.py pops
-    the key to reset the tab bar for a freshly generated topic). Falls
-    back to the first option (Explanation) if not given or not found.
+    `default_option` (e.g. "Quiz") controls which tab is selected the
+    FIRST time this widget is rendered for a given key (i.e. right after
+    app.py pops the key to reset the tab bar for a freshly generated
+    topic). On every later rerun, the user's current selection (read from
+    st.session_state[key], which st.radio keeps in sync) takes priority --
+    we never silently override an existing selection.
 
     Returns the currently selected option (e.g. "Explanation").
     """
@@ -312,31 +314,28 @@ def render_tab_nav(options=None, key: str = "main_tabs", icons: dict = None, def
     labels = [f"{icons.get(opt, '')} {opt}".strip() for opt in options]
     label_to_option = dict(zip(labels, options))
 
+    # Figure out which label should be selected on THIS render: if the
+    # widget already has a stored value, use it (this is what keeps the
+    # tab selection stable across reruns triggered by other widgets, like
+    # the Quiz's Reveal/Attempt mode toggle). Otherwise, fall back to
+    # default_option (or the first option).
     default_index = 0
     if default_option in options:
         default_index = options.index(default_option)
 
+    current_value = st.session_state.get(key)
+    if current_value in labels:
+        default_index = labels.index(current_value)
+
     with st.container(key="main-tabs"):
-        if key in st.session_state:
-            # Widget already has a stored selection -- let it persist
-            # across reruns as normal (don't pass index, which would
-            # override the user's current tab choice).
-            selected_label = st.radio(
-                "Section",
-                labels,
-                key=key,
-                horizontal=True,
-                label_visibility="collapsed",
-            )
-        else:
-            selected_label = st.radio(
-                "Section",
-                labels,
-                key=key,
-                horizontal=True,
-                label_visibility="collapsed",
-                index=default_index,
-            )
+        selected_label = st.radio(
+            "Section",
+            labels,
+            key=key,
+            horizontal=True,
+            label_visibility="collapsed",
+            index=default_index,
+        )
 
     return label_to_option.get(selected_label, options[0])
 

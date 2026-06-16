@@ -137,12 +137,17 @@ def parse_sections(raw_text: str) -> dict:
 # is still supported and parsed as "short" -- so previously-generated
 # content (or a model that ignores the tag instruction) doesn't break.
 
-# Matches one question block, with an optional [MCQ]/[SHORT] tag, up to
-# (but not including) the next "**Q<n>" or the end of the text.
+# Matches one question block. Requires the bold markers (**) and at
+# least one digit around "Q<n>" -- this is intentionally STRICTER than
+# a loose "any Q, any digits" pattern, because a loose version can
+# false-match on a bare letter "Q" appearing inside the question or
+# answer text itself (e.g. the word "Query"), which truncated questions
+# mid-word in earlier versions of this parser. The prompt in
+# Backend.prompts always produces "**Q<n> [TAG]:**", so this is safe.
 _QUIZ_BLOCK_PATTERN = re.compile(
-    r'\*{0,2}Q\s*\d*\s*(?:\[\s*(MCQ|SHORT)\s*\])?\s*[:.)]?\*{0,2}\s*'
+    r'\*{2}Q\s*\d+\s*(?:\[\s*(MCQ|SHORT)\s*\])?\s*:?\*{2}\s*'
     r'(.*?)'
-    r'(?=\*{0,2}Q\s*\d*\s*(?:\[\s*(?:MCQ|SHORT)\s*\])?\s*[:.)]?\*{0,2}|\Z)',
+    r'(?=\*{2}Q\s*\d+\s*(?:\[\s*(?:MCQ|SHORT)\s*\])?\s*:?\*{2}|\Z)',
     re.DOTALL | re.IGNORECASE,
 )
 
