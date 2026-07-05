@@ -281,3 +281,234 @@ Rules:
 - "feedback" must be at most 2 short sentences, warm and encouraging,
   briefly noting what was right or what was missed.
 """
+
+
+# ---------------------------------------------------------------------------
+# Compare Mode
+# ---------------------------------------------------------------------------
+# Compare Mode generates a structured side-by-side comparison of two topics.
+# It uses a completely different section structure from the standard study
+# material, so we define separate section headers here.
+
+SECTION_COMPARE_OVERVIEW = "Overview"
+SECTION_COMPARE_SIMILARITIES = "Similarities"
+SECTION_COMPARE_DIFFERENCES = "Key Differences"
+SECTION_COMPARE_USECASES = "When to Use Which"
+SECTION_COMPARE_SUMMARY = "Quick Summary"
+
+COMPARE_SECTION_HEADERS = [
+    SECTION_COMPARE_OVERVIEW,
+    SECTION_COMPARE_SIMILARITIES,
+    SECTION_COMPARE_DIFFERENCES,
+    SECTION_COMPARE_USECASES,
+    SECTION_COMPARE_SUMMARY,
+]
+
+
+def build_compare_prompt(topic_a: str, topic_b: str,
+                          difficulty: str = DEFAULT_DIFFICULTY) -> str:
+    """
+    Build a prompt for Compare Mode: a structured side-by-side comparison
+    of two topics. Returns a single prompt string for the model.
+
+    The response structure is different from standard study material --
+    it uses COMPARE_SECTION_HEADERS instead of SECTION_HEADERS, so
+    parser.py has a separate parse_compare_material() function.
+    """
+    topic_a = (topic_a or "").strip()
+    topic_b = (topic_b or "").strip()
+
+    difficulty_instruction = _DIFFICULTY_INSTRUCTIONS.get(
+        difficulty, _DIFFICULTY_INSTRUCTIONS[DEFAULT_DIFFICULTY]
+    )
+
+    return f"""You are an expert AI tutor. A student wants to understand the
+difference between two related topics.
+
+TOPIC A: {topic_a}
+TOPIC B: {topic_b}
+
+DIFFICULTY LEVEL: {difficulty}
+{difficulty_instruction}
+
+Produce a clear, structured comparison. Use EXACTLY these section headers
+(do not rename, reorder, or skip any):
+
+### {SECTION_COMPARE_OVERVIEW}
+One short paragraph each introducing {topic_a} and {topic_b} -- what each
+one IS, in plain terms.
+
+### {SECTION_COMPARE_SIMILARITIES}
+A bulleted list ("-") of the most important ways {topic_a} and {topic_b}
+are similar or serve the same purpose.
+
+### {SECTION_COMPARE_DIFFERENCES}
+A markdown table with columns: Feature | {topic_a} | {topic_b}
+Include at least 5 rows covering the most important distinguishing
+characteristics (e.g. performance, use case, complexity, syntax, etc.).
+
+### {SECTION_COMPARE_USECASES}
+Clear guidance on WHEN to pick {topic_a} vs {topic_b}. Use two short
+subsections:
+- **Choose {topic_a} when:** (3-4 bullet points)
+- **Choose {topic_b} when:** (3-4 bullet points)
+
+### {SECTION_COMPARE_SUMMARY}
+A 2-3 sentence plain-English summary a student can memorize: the single
+most important distinction between the two topics, and the simplest rule
+for choosing between them.
+
+MATH AND FORMULA FORMATTING:
+- Use $...$ for inline math and $$...$$ on its own line for block equations.
+- Never use square brackets [ ... ] for formulas.
+
+FORMATTING RULES:
+- Use exactly the "### " headers above, spelled exactly as given.
+- Do not add any extra headers, introduction, or closing remarks.
+- Keep the tone clear, student-friendly, and direct.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Auto-difficulty detection
+# ---------------------------------------------------------------------------
+
+def build_auto_difficulty_prompt(topic: str) -> str:
+    """
+    Build a short, cheap prompt that asks the model to classify a topic's
+    natural difficulty level (Beginner / Intermediate / Advanced).
+
+    Used in ai_handler.py for the auto-difficulty feature: when a user
+    types a topic, we fire this lightweight call first and pre-select the
+    difficulty dropdown. The model is instructed to respond with ONLY the
+    one-word level so we can parse the response without JSON handling.
+    """
+    topic = (topic or "").strip()
+    levels = " / ".join(DIFFICULTY_LEVELS)
+
+    return f"""You are a curriculum expert. Classify the academic difficulty of
+the following topic for a typical student:
+
+TOPIC: {topic}
+
+Respond with ONLY one word -- exactly one of: {levels}
+Do not add any explanation, punctuation, or extra text. Just the single word.
+
+Rules:
+- Beginner: a topic covered in high school or in the first year of university,
+  or something a curious non-specialist could pick up quickly.
+- Intermediate: a topic typically covered in later undergraduate study, or
+  something that requires prerequisite knowledge to understand properly.
+- Advanced: a topic at graduate level, or one that requires significant
+  prior expertise and is unlikely to be understood without it."""
+
+
+# ---------------------------------------------------------------------------
+# Follow-up / "Explain further" questions
+# ---------------------------------------------------------------------------
+
+def build_followup_prompt(topic: str, section_content: str,
+                           question: str) -> str:
+    """
+    Build a prompt for the "Ask a follow-up" feature.
+
+    Given the already-generated explanation for a topic and the user's
+    specific follow-up question, produce a focused, concise answer --
+    not a full study material regeneration.
+
+    Used by ai_handler.py's answer_followup() function, which streams
+    the response back to the UI.
+    """
+    topic = (topic or "").strip()
+    question = (question or "").strip()
+    # Truncate the section content to keep the prompt cheap -- we only
+    # need enough context for the model to answer in context.
+    context = (section_content or "")[:1500].strip()
+
+    return f"""You are an AI tutor who has just explained the topic "{topic}" to
+a student. Here is the explanation you gave:
+
+---
+{context}
+---
+
+The student has a follow-up question:
+
+QUESTION: {question}
+
+Answer the question directly and concisely. Stay focused on what was asked --
+do not re-explain the whole topic. Aim for 2-5 sentences unless a longer
+answer is genuinely necessary. Use the same math formatting rules as before
+($...$ for inline math, $$...$$ for block equations). Keep the tone warm
+and encouraging."""
+
+
+# ---------------------------------------------------------------------------
+# Study schedule / spaced repetition suggestions
+# ---------------------------------------------------------------------------
+
+def build_study_schedule_prompt(history: list) -> str:
+    """
+    Build a prompt that takes the user's search history and suggests which
+    topics to review today, using basic spaced repetition principles.
+
+    `history` is a list of dicts: {"topic", "difficulty", "study_mode"}.
+    Returns a prompt whose response is a short structured suggestion list.
+
+    Used by ai_handler.py's get_study_suggestions() function.
+    """
+    if not history:
+        return ""
+
+    # Format history as a readable list for the model (most recent first,
+    # cap at 10 to keep prompt cheap).
+    history_lines = "\n".join(
+        f"{i+1}. {item.get('topic', '')} "
+        f"({item.get('difficulty', '')} / {item.get('study_mode', '')})"
+        for i, item in enumerate(history[:10])
+    )
+
+    return f"""You are a study coach. A student has recently studied the following
+topics (most recent first):
+
+{history_lines}
+
+Based on spaced repetition principles, suggest which 2-3 topics from this
+list the student should review TODAY to reinforce their memory most
+effectively. Topics studied most recently need less immediate review; topics
+from earlier in the list benefit more from a quick revisit now.
+
+Respond with ONLY a JSON array on a single line. No extra text, no markdown,
+no explanation. Each item should have "topic" and "reason" keys:
+
+[{{"topic": "...", "reason": "1 short sentence why to review today"}}, ...]
+
+The "reason" must be at most one sentence. Only include topics from the list
+above -- do not invent new ones. Suggest 2-3 topics maximum."""
+
+
+# ---------------------------------------------------------------------------
+# Topic notes / annotations
+# ---------------------------------------------------------------------------
+
+def build_notes_summary_prompt(topic: str, notes: str) -> str:
+    """
+    Build a prompt that takes the user's raw personal notes on a topic
+    and returns a cleaned-up, structured version.
+
+    Used optionally when the user clicks "Polish my notes" in the notes
+    annotation feature.
+    """
+    topic = (topic or "").strip()
+    notes = (notes or "").strip()
+
+    return f"""A student has written rough personal notes on the topic "{topic}".
+Polish these notes into clean, well-structured bullet points that are easy
+to revise from. Keep all the student's own ideas -- do not add new content
+they didn't mention. Fix grammar and spelling. Group related points together.
+
+STUDENT'S NOTES:
+{notes}
+
+Respond with ONLY the polished bullet points, using "-" for each bullet.
+No introduction, no "Here are your notes:", just the bullets directly."""

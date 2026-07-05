@@ -32,11 +32,15 @@ from dotenv import load_dotenv
 from backend.prompts import (
     build_prompt,
     build_grading_prompt,
+    build_compare_prompt,
+    build_auto_difficulty_prompt,
+    build_followup_prompt,
+    build_study_schedule_prompt,
     GRADE_VERDICTS,
     DEFAULT_DIFFICULTY,
     DEFAULT_STUDY_MODE,
 )
-from backend.parser import check_answer
+from backend.parser import check_answer, parse_compare_material, parse_study_schedule
 
 # Load environment variables (.env in project root)
 load_dotenv()
@@ -254,3 +258,237 @@ def grade_quiz_answer(question: str, correct_answer: str, user_answer: str) -> d
         "feedback": _FALLBACK_FEEDBACK.get(verdict, _FALLBACK_FEEDBACK["incorrect"]),
         "source": "heuristic",
     }
+
+
+# ---------------------------------------------------------------------------
+# Streaming helper
+# ---------------------------------------------------------------------------
+
+def _stream_openrouter(prompt: str, max_tokens: int = 1024):
+    """
+    Low-level streaming call to OpenRouter using SSE (Server-Sent Events).
+    Yields text chunks as they arrive, for use with st.write_stream().
+
+    OpenRouter follows the OpenAI SSE spec:
+      - Each chunk is a line: "data: {json}"
+      - The content delta is in choices[0].delta.content
+      - The stream ends with: "data: [DONE]"
+
+    Yields:
+        str chunks on success.
+        Raises RuntimeError with a user-friendly message on failure.
+    """
+    if not API_KEY:
+        raise RuntimeError("Missing API key. Set OPENROUTER_API_KEY.")
+
+    try:
+        response = requests.post(
+            url=OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": MODEL_NAME,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            timeout=REQUEST_TIMEOUT,
+            stream=True,
+        )
+    except requests.exceptions.Timeout:
+        raise RuntimeError("The request timed out. Please try again.")
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Could not connect to the AI service.")
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Network error: {exc}")
+
+    if response.status_code != 200:
+        raise RuntimeError(f"AI service error (status {response.status_code}).")
+
+    for line in response.iter_lines():
+        if not line:
+            continue
+        # Each line is b"data: {json}" or b"data: [DONE]"
+        decoded = line.decode("utf-8", errors="replace")
+        if not decoded.startswith("data:"):
+            continue
+        payload = decoded[5:].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            chunk = json.loads(payload)
+            delta = chunk["choices"][0]["delta"].get("content", "")
+            if delta:
+                yield delta
+        except (json.JSONDecodeError, KeyError, IndexError):
+            continue
+
+
+# ---------------------------------------------------------------------------
+# Compare Mode
+# ---------------------------------------------------------------------------
+
+def generate_compare_material(topic_a: str, topic_b: str,
+                               difficulty: str = DEFAULT_DIFFICULTY):
+    """
+    Generate a structured comparison of two topics.
+
+    Returns:
+        (True, compare_dict)   on success -- dict from parse_compare_material()
+        (False, error_message) on any failure
+    """
+    topic_a = (topic_a or "").strip()
+    topic_b = (topic_b or "").strip()
+
+    if not topic_a or not topic_b:
+        return False, "Please enter both topics to compare."
+
+    prompt = build_compare_prompt(topic_a, topic_b, difficulty)
+    success, content = _call_openrouter(prompt)
+
+    if not success:
+        return False, content
+
+    return True, parse_compare_material(content, topic_a, topic_b)
+
+
+# ---------------------------------------------------------------------------
+# Auto-difficulty detection
+# ---------------------------------------------------------------------------
+
+def detect_difficulty(topic: str) -> str:
+    """
+    Ask the model to classify the natural difficulty level of a topic.
+    Returns one of "Beginner", "Intermediate", "Advanced".
+    Falls back to "Intermediate" on any failure -- never raises.
+
+    This is a cheap, fast call (single-word response) designed to be
+    fired as the user types, to pre-select the difficulty dropdown.
+    """
+    from backend.prompts import DIFFICULTY_LEVELS
+
+    topic = (topic or "").strip()
+    if not topic:
+        return DEFAULT_DIFFICULTY
+
+    prompt = build_auto_difficulty_prompt(topic)
+    success, content = _call_openrouter(prompt)
+
+    if not success:
+        return DEFAULT_DIFFICULTY
+
+    # The model should return exactly one word. Find it.
+    content = (content or "").strip()
+    for level in DIFFICULTY_LEVELS:
+        if level.lower() in content.lower():
+            return level
+
+    return DEFAULT_DIFFICULTY
+
+
+# ---------------------------------------------------------------------------
+# Follow-up questions (streaming)
+# ---------------------------------------------------------------------------
+
+def stream_followup_answer(topic: str, section_content: str, question: str):
+    """
+    Stream a focused answer to the user's follow-up question about the
+    current topic. Designed for use with st.write_stream().
+
+    Yields str chunks. Raises RuntimeError on failure (caller should
+    catch and display an error message).
+
+    Uses a smaller max_tokens (512) since follow-up answers should be
+    concise -- not a full study material regeneration.
+    """
+    prompt = build_followup_prompt(topic, section_content, question)
+    yield from _stream_openrouter(prompt, max_tokens=512)
+
+
+# ---------------------------------------------------------------------------
+# Study schedule / spaced repetition
+# ---------------------------------------------------------------------------
+
+def get_study_suggestions(history: list) -> list:
+    """
+    Given the user's search history, return a list of topics the model
+    suggests reviewing today (spaced repetition).
+
+    Returns a list of {"topic": str, "reason": str} dicts (2-3 items).
+    Returns [] on failure or if history is empty -- never raises.
+    """
+    if not history:
+        return []
+
+    prompt = build_study_schedule_prompt(history)
+    if not prompt:
+        return []
+
+    success, content = _call_openrouter(prompt)
+
+    if not success:
+        return []
+
+    return parse_study_schedule(content)
+
+
+# ---------------------------------------------------------------------------
+# Voice-to-topic (audio transcription via OpenRouter Whisper)
+# ---------------------------------------------------------------------------
+
+WHISPER_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
+WHISPER_MODEL = "openai/whisper-large-v3"
+AUDIO_TIMEOUT = 30  # seconds -- audio files are small, 30s is generous
+
+
+def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> tuple:
+    """
+    Transcribe speech audio to text using OpenRouter's Whisper endpoint.
+
+    `audio_bytes` is the raw audio file content (WAV, MP3, WebM, etc.)
+    `filename` is used to set the MIME type hint for the API.
+
+    Returns:
+        (True, transcribed_text)   on success
+        (False, error_message)     on any failure
+
+    The returned text is trimmed and ready to use as a topic input.
+    """
+    if not API_KEY:
+        return False, "Missing API key."
+
+    if not audio_bytes:
+        return False, "No audio data received."
+
+    try:
+        response = requests.post(
+            url=WHISPER_URL,
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            files={"file": (filename, audio_bytes, "audio/wav")},
+            data={"model": WHISPER_MODEL},
+            timeout=AUDIO_TIMEOUT,
+        )
+    except requests.exceptions.Timeout:
+        return False, "Audio transcription timed out. Please try again."
+    except requests.exceptions.RequestException as exc:
+        return False, f"Network error during transcription: {exc}"
+
+    if response.status_code == 404:
+        return False, "Voice transcription not available on this plan."
+    if response.status_code == 429:
+        return False, "Rate limit reached. Please wait a moment."
+    if response.status_code != 200:
+        return False, f"Transcription error (status {response.status_code})."
+
+    try:
+        result = response.json()
+        text = (result.get("text") or "").strip()
+    except (ValueError, AttributeError):
+        return False, "Could not parse transcription response."
+
+    if not text:
+        return False, "No speech detected in the audio. Please try again."
+
+    return True, text

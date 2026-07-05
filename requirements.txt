@@ -4,3 +4,5 @@ python-dotenv
 streamlit-lottie
 fpdf2
 reportlab
+supabase
+pypdf

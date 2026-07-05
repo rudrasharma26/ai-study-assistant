@@ -883,6 +883,540 @@ div[class*="st-key-section-card-"],
         padding-left: 0.75rem !important;
         padding-right: 0.75rem !important;
     }
+
+    /* Mobile: stack compare columns */
+    .compare-table-wrapper { overflow-x: auto; }
+
+    /* Mobile: hide chip carousel overflow cleanly */
+    .chip-carousel-track { gap: 0.5rem; }
+}
+
+
+/* ==========================================================================
+   LIGHT THEME  (toggled by adding class "light-theme" to .stApp)
+   When the user toggles light mode, app.py injects a small <style> block
+   that overrides these CSS variables. All components use var() so they
+   automatically pick up the overrides.
+   ========================================================================== */
+.light-theme {
+    --bg-deep: #F0F4FF;
+    --bg-card: rgba(255, 255, 255, 0.90);
+    --bg-card-hover: rgba(255, 255, 255, 0.98);
+    --border-color: rgba(0, 0, 0, 0.08);
+    --border-glow: rgba(109, 40, 217, 0.35);
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --text-muted: #94A3B8;
+    background-color: #F0F4FF !important;
+    background-image:
+        radial-gradient(ellipse 70% 45% at 15% -5%, rgba(96, 165, 250, 0.10), transparent 60%),
+        radial-gradient(ellipse 60% 45% at 95% 5%, rgba(167, 139, 250, 0.10), transparent 60%) !important;
+}
+.light-theme .stApp { color: #0F172A; }
+.light-theme [data-testid="stSidebar"] {
+    background: rgba(240, 244, 255, 0.96) !important;
+    border-right: 1px solid rgba(0,0,0,0.08) !important;
+}
+.light-theme .stTextInput input,
+.light-theme .stTextArea textarea {
+    background: rgba(0, 0, 0, 0.03) !important;
+    color: #0F172A !important;
+    border-color: rgba(0,0,0,0.12) !important;
+}
+
+
+/* ==========================================================================
+   THEME TOGGLE BUTTON  (in sidebar)
+   ========================================================================== */
+.st-key-theme-toggle .stButton > button {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    padding: 0.35rem 0.75rem;
+    width: 100%;
+    text-align: left;
+    transition: all 0.2s ease;
+}
+.st-key-theme-toggle .stButton > button:hover {
+    border-color: var(--accent-purple);
+    color: var(--accent-purple);
+}
+
+
+/* ==========================================================================
+   STREAK DISPLAY  (components.render_streak -> key="streak-display")
+   ========================================================================== */
+.streak-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(248,113,113,0.10));
+    border: 1px solid rgba(251,191,36,0.30);
+    border-radius: 20px;
+    padding: 0.28rem 0.75rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--warning);
+    margin-bottom: 0.5rem;
+    animation: pulseScale 2.5s ease-in-out infinite;
+}
+.streak-badge.streak-zero {
+    background: rgba(255,255,255,0.04);
+    border-color: var(--border-color);
+    color: var(--text-muted);
+    animation: none;
+}
+
+
+/* ==========================================================================
+   ANIMATED CHIP CAROUSEL  (components.render_topic_chips)
+   ========================================================================== */
+.chip-carousel-wrapper {
+    overflow: hidden;
+    width: 100%;
+    mask-image: linear-gradient(to right, transparent 0%, black 6%, black 94%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 6%, black 94%, transparent 100%);
+}
+.chip-carousel-track {
+    display: flex;
+    gap: 0.65rem;
+    animation: chipScroll 28s linear infinite;
+    width: max-content;
+}
+.chip-carousel-track:hover {
+    animation-play-state: paused;
+}
+@keyframes chipScroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+
+/* ==========================================================================
+   GENERATION PROGRESS INDICATOR
+   (components.render_progress_indicator -> key="gen-progress")
+   ========================================================================== */
+.st-key-gen-progress {
+    padding: 1.25rem;
+    border-radius: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    margin: 0.75rem 0;
+}
+.progress-step {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.35rem 0;
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    transition: color 0.3s ease;
+}
+.progress-step.active {
+    color: var(--accent-purple);
+    font-weight: 600;
+}
+.progress-step.done {
+    color: var(--success);
+}
+.progress-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+.progress-step.active .progress-dot {
+    animation: pulseScale 1s ease-in-out infinite;
+}
+
+
+/* ==========================================================================
+   FOLLOW-UP QUESTION INPUT
+   (components.render_followup_input -> key="followup-section")
+   ========================================================================== */
+.st-key-followup-section {
+    margin-top: 1rem;
+    padding: 1rem 1.25rem;
+    border-radius: 14px;
+    background: rgba(96, 165, 250, 0.05);
+    border: 1px solid rgba(96, 165, 250, 0.15);
+}
+.followup-label {
+    font-size: 0.82rem;
+    color: var(--accent-blue);
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+
+/* ==========================================================================
+   TOPIC NOTES / ANNOTATIONS
+   (components.render_notes_section -> key="notes-section-<slug>")
+   ========================================================================== */
+div[class*="st-key-notes-section-"] {
+    margin-top: 1rem;
+    padding: 1rem 1.25rem;
+    border-radius: 14px;
+    background: rgba(167, 139, 250, 0.05);
+    border: 1px dashed rgba(167, 139, 250, 0.25);
+}
+.notes-label {
+    font-size: 0.82rem;
+    color: var(--accent-purple);
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+
+/* ==========================================================================
+   STUDY SCHEDULE / SPACED REPETITION PANEL
+   (components.render_study_schedule -> key="study-schedule")
+   ========================================================================== */
+.st-key-study-schedule {
+    padding: 1rem 1.25rem;
+    border-radius: 14px;
+    background: rgba(34, 211, 238, 0.05);
+    border: 1px solid rgba(34, 211, 238, 0.15);
+    margin-bottom: 1rem;
+}
+.schedule-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.schedule-item:last-child { border-bottom: none; }
+.schedule-topic {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+.schedule-reason {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+
+/* ==========================================================================
+   COMPARE MODE
+   (components.render_compare_result -> key="compare-result")
+   ========================================================================== */
+.st-key-compare-result {
+    animation: fadeInUp 0.5s ease;
+}
+.compare-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.compare-topic-badge {
+    flex: 1;
+    text-align: center;
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 1rem;
+}
+.compare-topic-badge.topic-a {
+    background: rgba(96, 165, 250, 0.12);
+    border: 1px solid rgba(96, 165, 250, 0.30);
+    color: var(--accent-blue);
+}
+.compare-topic-badge.topic-b {
+    background: rgba(167, 139, 250, 0.12);
+    border: 1px solid rgba(167, 139, 250, 0.30);
+    color: var(--accent-purple);
+}
+.compare-vs {
+    font-weight: 800;
+    font-size: 1.1rem;
+    color: var(--text-muted);
+}
+
+/* Compare Mode section cards */
+div[class*="st-key-compare-card-"] {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 0.75rem;
+    backdrop-filter: blur(12px);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+div[class*="st-key-compare-card-"]:hover {
+    border-color: rgba(167, 139, 250, 0.30);
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.12);
+}
+.compare-section-title {
+    font-family: 'Sora', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--accent-purple);
+    margin-bottom: 0.6rem;
+}
+
+/* Diff table inside Compare Mode -- style markdown tables */
+div[class*="st-key-compare-card-differences"] table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+div[class*="st-key-compare-card-differences"] th {
+    background: rgba(167, 139, 250, 0.12);
+    color: var(--accent-purple);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid rgba(167, 139, 250, 0.25);
+}
+div[class*="st-key-compare-card-differences"] td {
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    vertical-align: top;
+}
+div[class*="st-key-compare-card-differences"] tr:hover td {
+    background: rgba(255,255,255,0.02);
+}
+
+
+/* ==========================================================================
+   ANIMATED GRADIENT BORDER -- premium "glow" card effect
+   Applied to section cards on hover via the .glow-border class
+   (components.py adds this class to container cards)
+   ========================================================================== */
+@property --border-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+}
+@keyframes rotateBorder {
+    to { --border-angle: 360deg; }
+}
+.glow-border {
+    position: relative;
+    border-radius: 16px;
+}
+.glow-border::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 17px;
+    background: conic-gradient(
+        from var(--border-angle),
+        rgba(96,165,250,0) 0%,
+        rgba(96,165,250,0.6) 25%,
+        rgba(167,139,250,0.6) 50%,
+        rgba(244,114,182,0.6) 75%,
+        rgba(96,165,250,0) 100%
+    );
+    animation: rotateBorder 4s linear infinite;
+    z-index: 0;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.glow-border:hover::before {
+    opacity: 1;
+}
+.glow-border > * {
+    position: relative;
+    z-index: 1;
+}
+
+
+/* ==========================================================================
+   ONBOARDING TOUR TOOLTIPS
+   (injected via st.html when user first logs in)
+   ========================================================================== */
+.tour-tooltip {
+    position: fixed;
+    z-index: 9999;
+    background: var(--bg-card);
+    border: 1px solid var(--border-glow);
+    border-radius: 14px;
+    padding: 0.85rem 1.1rem;
+    max-width: 260px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(167,139,250,0.2);
+    animation: fadeInUp 0.4s ease;
+    backdrop-filter: blur(16px);
+}
+.tour-tooltip-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--accent-purple);
+    margin-bottom: 0.3rem;
+}
+.tour-tooltip-body {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.tour-tooltip-arrow {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    cursor: pointer;
+    text-align: right;
+}
+.tour-tooltip-arrow:hover {
+    color: var(--accent-purple);
+}
+
+
+/* ==========================================================================
+   KEYBOARD SHORTCUT HINTS
+   Shown as small <kbd> tags in tooltips and button labels
+   ========================================================================== */
+kbd {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    font-family: 'Inter', monospace;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+
+/* ==========================================================================
+   VOICE INPUT BUTTON
+   (components.render_voice_input -> key="voice-input-section")
+   ========================================================================== */
+.st-key-voice-input-section {
+    margin-top: 0.5rem;
+}
+.voice-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+
+/* ==========================================================================
+   AUTO-DIFFICULTY BADGE
+   Shown next to difficulty dropdown when auto-detect fires
+   ========================================================================== */
+.auto-diff-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    background: rgba(34,211,238,0.08);
+    border: 1px solid rgba(34,211,238,0.20);
+    border-radius: 20px;
+    padding: 0.15rem 0.6rem;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+}
+
+
+/* ==========================================================================
+   LOGIN PAGE
+   (storage.render_login_page uses this via inline styles + st.html)
+   ========================================================================== */
+.st-key-login-page {
+    min-height: 75vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.login-card {
+    max-width: 420px;
+    margin: 0 auto;
+    text-align: center;
+    padding: 3rem 2.5rem;
+    border-radius: 28px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 0 60px rgba(99,102,241,0.14), 0 24px 60px rgba(0,0,0,0.40);
+    animation: fadeInUp 0.7s ease;
+}
+.login-app-icon {
+    font-size: 3rem;
+    margin-bottom: 0.75rem;
+    display: inline-block;
+    animation: floatY 3s ease-in-out infinite;
+}
+.login-title {
+    font-family: 'Sora', sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #93C5FD, #A78BFA, #F0ABFC);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 0.4rem;
+}
+.login-subtitle {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin-bottom: 2rem;
+}
+.login-privacy-note {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 1rem;
+    line-height: 1.5;
+}
+
+
+/* ==========================================================================
+   PDF UPLOAD SECTION
+   (components.render_pdf_upload -> key="pdf-upload-section")
+   ========================================================================== */
+.st-key-pdf-upload-section {
+    padding: 1rem 1.25rem;
+    border-radius: 14px;
+    background: rgba(244,114,182,0.04);
+    border: 1px dashed rgba(244,114,182,0.20);
+    margin-bottom: 0.75rem;
+}
+.pdf-upload-label {
+    font-size: 0.82rem;
+    color: var(--accent-pink);
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+}
+
+
+/* ==========================================================================
+   SCORE SUMMARY  (after attempting quiz)
+   (components._render_score_summary)
+   ========================================================================== */
+.score-summary-bar {
+    height: 8px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden;
+    margin: 0.5rem 0 0.75rem;
+}
+.score-summary-fill {
+    height: 100%;
+    border-radius: 8px;
+    background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+    transition: width 0.6s ease;
 }
 
 </style>

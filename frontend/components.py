@@ -3,19 +3,29 @@ frontend/components.py
 
 Reusable, render-only UI building blocks for the AI Study Assistant:
 
-- render_onboarding()         -- first-time "what's your name?" screen
-- render_bhabhi_reveal()       -- secret romantic reveal screen
+- render_login_page()           -- Google login page (replaces onboarding)
 - render_hero()                 -- hero/branding section
-- render_greeting_banner()      -- "Hello {name} 👋" banner
-- render_topic_chips()          -- dynamic example/related topic chips
+- render_greeting_banner()      -- "Hello {name} 👋" banner with streak
+- render_streak_badge()         -- 🔥 streak counter badge
+- render_topic_chips()          -- animated carousel of topic suggestions
 - render_tab_nav()              -- persistent pill-style tab navigation
 - render_loading_animation()    -- animated loader with cycling messages
+- render_progress_indicator()   -- step-by-step generation progress
 - render_copy_button()          -- clipboard-copy button via embedded JS
 - render_export_row()           -- Copy All / Download TXT / Download PDF
 - render_section_card()         -- glass card for a study-material section
+- render_followup_input()       -- follow-up question input + streaming answer
+- render_notes_section()        -- per-topic personal notes/annotations
 - render_quiz()                 -- interactive, AI-graded quiz
 - render_favorite_toggle()      -- star favorite toggle button
+- render_compare_result()       -- Compare Mode structured output
+- render_study_schedule()       -- spaced repetition suggestion panel
+- render_voice_input()          -- microphone input for voice-to-topic
+- render_pdf_upload()           -- PDF upload -> extract text -> study
+- render_onboarding_tour()      -- first-login feature walkthrough tooltips
 - render_sidebar_*()            -- sidebar brand/history/favorites helpers
+- render_theme_toggle()         -- dark/light mode toggle
+- render_keyboard_shortcuts()   -- JS keyboard shortcut handler injection
 
 Every function here either renders UI and returns nothing, or renders UI and
 returns a simple value (a click result, a selected option, a submitted
@@ -33,117 +43,43 @@ import uuid
 import streamlit as st
 
 from backend import ai_handler
-from backend.prompts import SECTION_HEADERS
+from backend.prompts import SECTION_HEADERS, COMPARE_SECTION_HEADERS
 from utils import export
 
 
 # ---------------------------------------------------------------------------
-# Onboarding screen
+# Login page (Google OAuth via st.login)
 # ---------------------------------------------------------------------------
 
-def render_onboarding():
+def render_login_page():
     """
-    Render the first-time welcome screen asking for the user's name.
-
-    Returns the submitted name (str) if the form was submitted with a
-    non-empty name on this run, otherwise None.
+    Render the full-page login card with a Google sign-in button.
+    Called from app.py when storage.init_auth() returns False.
     """
-    submitted_name = None
-
-    with st.container(key="onboarding-screen"):
+    with st.container(key="login-page"):
         st.markdown(
             """
-            <div class="onboarding-card">
-                <div class="onboarding-icon">✨</div>
-                <div class="onboarding-title">
-                    May I have the privilege<br>of knowing your name?
-                </div>
-                <p class="onboarding-subtitle">
-                    Just your name -- no sign-up, no password.
-                    We'll remember it so your study space feels like yours.
+            <div class="login-card">
+                <div class="login-app-icon">🧠</div>
+                <div class="login-title">AI Study Assistant</div>
+                <p class="login-subtitle">
+                    Your intelligent companion for learning anything, anytime —
+                    explanations, summaries, key points, and quizzes tailored to your level.
                 </p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-
-        with st.container(key="onboarding-form"):
-            _, mid, _ = st.columns([1, 2, 1])
-            with mid:
-                with st.form("onboarding_form", clear_on_submit=False):
-                    name = st.text_input(
-                        "Your name",
-                        placeholder="Enter your name...",
-                        label_visibility="collapsed",
-                    )
-                    submitted = st.form_submit_button(
-                        "Continue ✨", use_container_width=True, type="primary"
-                    )
-
-    if submitted and name.strip():
-        submitted_name = name.strip()
-
-    return submitted_name
-
-
-# ---------------------------------------------------------------------------
-# Secret romantic reveal screen
-# ---------------------------------------------------------------------------
-
-_PARTICLE_EMOJIS = ["💖", "💕", "🌸", "✨", "💗", "🩷"]
-
-
-def render_bhabhi_reveal() -> bool:
-    """
-    Render the secret romantic reveal screen shown only when
-    utils.storage.is_bhabhi_mode(name) is True.
-
-    Returns True if the "Enter Study Space" button was clicked this run.
-    """
-    # Fixed seed -> particle positions stay stable across reruns instead of
-    # jumping around every time the user interacts with something.
-    rng = random.Random(1234)
-    particles_html = ""
-    for _ in range(16):
-        emoji = rng.choice(_PARTICLE_EMOJIS)
-        left = rng.randint(2, 96)
-        delay = round(rng.uniform(0, 8), 1)
-        duration = round(rng.uniform(7, 13), 1)
-        size = round(rng.uniform(1.0, 1.9), 2)
-        particles_html += (
-            f'<span class="romantic-particle" '
-            f'style="left:{left}%; animation-delay:{delay}s; '
-            f'animation-duration:{duration}s; font-size:{size}rem;">'
-            f'{emoji}</span>'
-        )
-
-    with st.container(key="bhabhi-reveal"):
-        st.markdown(
-            f"""
-            {particles_html}
-            <div class="romantic-card">
-                <div class="romantic-hearts">💞</div>
-                <div class="romantic-title">🌸 Areey Bhabhiji Aap 😌✨</div>
-                <div class="romantic-divider"></div>
-                <div class="romantic-subtitle">Aaj kya seekhna pasand karengi?</div>
-                <p class="romantic-text">
-                    A special study space has been prepared just for you 💖<br>
-                    Explanations, summaries, important points, and quizzes --
-                    all ready whenever you are.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("<div style='height: 0.75rem;'></div>", unsafe_allow_html=True)
-
-        left, mid, right = st.columns([1, 1.4, 1])
+        _, mid, _ = st.columns([2, 1, 2])
         with mid:
-            with st.container(key="bhabhi-enter-btn"):
-                clicked = st.button("Enter Study Space 💖", use_container_width=True)
-
-    return clicked
+            st.login("google")
+        st.markdown(
+            '<p class="login-privacy-note" style="text-align:center; margin-top:1rem;">'
+            "We only use your Google account to identify your study space. "
+            "No data is shared with third parties."
+            "</p>",
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -168,15 +104,30 @@ def render_hero():
 
 
 # ---------------------------------------------------------------------------
+# Streak badge
+# ---------------------------------------------------------------------------
+
+def render_streak_badge(streak: int):
+    """Render a small animated 🔥 streak badge in the sidebar."""
+    if streak > 0:
+        label = f"🔥 {streak}-day streak"
+        css_class = "streak-badge"
+    else:
+        label = "📅 Start your streak today!"
+        css_class = "streak-badge streak-zero"
+    st.markdown(f'<div class="{css_class}">{label}</div>', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
 # Greeting banner
 # ---------------------------------------------------------------------------
 
-def render_greeting_banner(username: str, bhabhi_mode: bool = False):
+def render_greeting_banner(username: str, is_special: bool = False):
     """
-    Render the personalized greeting banner shown above the hero on the
-    main app screen.
+    Render the personalized greeting banner shown above the hero.
+    `is_special` triggers a custom greeting for the special user.
     """
-    if bhabhi_mode:
+    if is_special:
         title = "Hello Bhabhi Ji 😌✨"
         subtitle = "What can I do for you today?"
     else:
@@ -256,15 +207,19 @@ def get_topic_suggestions(current_topic: str) -> list:
 
 def render_topic_chips(topic_key: str, current_topic: str = ""):
     """
-    Render a row of clickable topic-suggestion chips. Clicking a chip sets
-    st.session_state[topic_key] to that topic and triggers a rerun.
+    Render an animated scrolling carousel of topic-suggestion chips.
+    The carousel auto-scrolls and pauses on hover. Clicking a chip sets
+    st.session_state[topic_key] and reruns.
 
     IMPORTANT: call this BEFORE the st.text_input/st.form that uses
-    `topic_key`, otherwise Streamlit will raise an error about modifying a
-    widget's session state after it has been instantiated.
+    `topic_key`, otherwise Streamlit will raise a widget key error.
     """
     suggestions = get_topic_suggestions(current_topic)
     label = "Try one of these" if not (current_topic or "").strip() else "Related topics"
+
+    # For the carousel we need enough chips to fill the width and loop --
+    # duplicate the list so the CSS animation loops seamlessly.
+    doubled = suggestions + suggestions
 
     with st.container(key="topic-chips"):
         st.markdown(f'<div class="chip-label">{label}</div>', unsafe_allow_html=True)
@@ -417,6 +372,35 @@ def render_loading_animation(messages=None, height: int = 170):
     st.iframe(html_code, height=height)
 
 
+def render_progress_indicator(current_step: int):
+    """
+    Render a step-by-step generation progress indicator.
+    `current_step` is 0-indexed (0=understanding, 1=explaining, 2=quiz, 3=done).
+    Called from app.py during generation to replace the plain spinner.
+    """
+    steps = [
+        "Understanding your topic...",
+        "Building explanation & summary...",
+        "Crafting quiz questions...",
+        "Finalising your study material...",
+    ]
+    with st.container(key="gen-progress"):
+        for i, step in enumerate(steps):
+            if i < current_step:
+                css = "progress-step done"
+                icon = "✅"
+            elif i == current_step:
+                css = "progress-step active"
+                icon = "⚡"
+            else:
+                css = "progress-step"
+                icon = "○"
+            st.markdown(
+                f'<div class="{css}"><span class="progress-dot"></span>{icon} {step}</div>',
+                unsafe_allow_html=True,
+            )
+
+
 # ---------------------------------------------------------------------------
 # Clipboard copy button
 # ---------------------------------------------------------------------------
@@ -533,6 +517,337 @@ def render_section_card(title, icon, content, key=None):
         )
 
         st.markdown(content)
+
+
+# ---------------------------------------------------------------------------
+# Follow-up question input (streamed answer)
+# ---------------------------------------------------------------------------
+
+def render_followup_input(topic: str, section_content: str):
+    """
+    Render a follow-up question input below a section card.
+    Streams the AI's answer inline using st.write_stream().
+    """
+    slug = _safe_filename(topic)
+    with st.container(key="followup-section"):
+        st.markdown('<div class="followup-label">💬 Ask a follow-up</div>', unsafe_allow_html=True)
+
+        question = st.text_input(
+            "Follow-up question",
+            key=f"followup_input_{slug}",
+            placeholder="e.g. Can you explain this in simpler terms?",
+            label_visibility="collapsed",
+        )
+        if st.button("Ask ✨", key=f"followup_btn_{slug}") and question.strip():
+            with st.spinner("Thinking..."):
+                try:
+                    answer_placeholder = st.empty()
+                    full_answer = ""
+                    for chunk in ai_handler.stream_followup_answer(topic, section_content, question):
+                        full_answer += chunk
+                        answer_placeholder.markdown(full_answer + "▌")
+                    answer_placeholder.markdown(full_answer)
+                except RuntimeError as e:
+                    st.error(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Topic notes / annotations
+# ---------------------------------------------------------------------------
+
+def render_notes_section(topic: str, saved_notes: str = "") -> str | None:
+    """
+    Render a personal notes text area for the current topic.
+    Returns the new notes string if the user saved them, otherwise None.
+    App.py is responsible for persisting the notes.
+    """
+    slug = _safe_filename(topic)
+    with st.container(key=f"notes-section-{slug}"):
+        st.markdown('<div class="notes-label">📝 My Notes</div>', unsafe_allow_html=True)
+        notes = st.text_area(
+            "Notes",
+            value=saved_notes,
+            key=f"notes_area_{slug}",
+            placeholder="Jot down your thoughts, key points, or questions here...",
+            label_visibility="collapsed",
+            height=120,
+        )
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("💾 Save Notes", key=f"notes_save_{slug}", use_container_width=True):
+                return notes.strip()
+        with col2:
+            if st.button("✨ Polish with AI", key=f"notes_polish_{slug}", use_container_width=True):
+                if notes.strip():
+                    from backend.prompts import build_notes_summary_prompt
+                    from backend.ai_handler import _call_openrouter
+                    with st.spinner("Polishing..."):
+                        success, result = _call_openrouter(build_notes_summary_prompt(topic, notes))
+                        if success:
+                            st.markdown("**Polished Notes:**")
+                            st.markdown(result)
+                        else:
+                            st.error(result)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Voice input (microphone -> transcribe -> set as topic)
+# ---------------------------------------------------------------------------
+
+def render_voice_input(topic_key: str):
+    """
+    Render a microphone input using st.audio_input (Streamlit 1.51+).
+    On recording, transcribes audio and sets st.session_state[topic_key].
+    Returns True if a transcription was set this run, False otherwise.
+    """
+    with st.container(key="voice-input-section"):
+        audio = st.audio_input(
+            "🎤 Speak your topic",
+            key="voice_recorder",
+            label_visibility="visible",
+        )
+        st.markdown(
+            '<div class="voice-hint">🎙️ Record your topic, then it\'ll be transcribed automatically.</div>',
+            unsafe_allow_html=True,
+        )
+
+        if audio is not None:
+            audio_bytes = audio.read()
+            if audio_bytes:
+                with st.spinner("Transcribing..."):
+                    success, text = ai_handler.transcribe_audio(audio_bytes, filename="voice.wav")
+                if success:
+                    st.session_state[topic_key] = text
+                    st.success(f"Heard: *{text}*")
+                    return True
+                else:
+                    st.error(f"Transcription failed: {text}")
+    return False
+
+
+# ---------------------------------------------------------------------------
+# PDF upload -> extract text -> use as topic context
+# ---------------------------------------------------------------------------
+
+def render_pdf_upload() -> str | None:
+    """
+    Render a PDF/image upload widget. Extracts text from the uploaded file
+    and returns it as a string for use as the topic input, or None if
+    nothing was uploaded. App.py uses the extracted text to pre-fill the
+    topic input.
+    """
+    with st.container(key="pdf-upload-section"):
+        st.markdown('<div class="pdf-upload-label">📄 Upload a PDF or image to study from</div>', unsafe_allow_html=True)
+        uploaded = st.file_uploader(
+            "Upload file",
+            type=["pdf", "png", "jpg", "jpeg"],
+            key="pdf_uploader",
+            label_visibility="collapsed",
+        )
+        if uploaded is None:
+            return None
+
+        file_bytes = uploaded.read()
+        if uploaded.type == "application/pdf":
+            try:
+                import pypdf
+                import io
+                reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+                text = "\n".join(
+                    page.extract_text() or ""
+                    for page in reader.pages
+                ).strip()
+                if text:
+                    # Truncate to avoid enormous prompts
+                    return text[:3000]
+                else:
+                    st.warning("Could not extract text from this PDF.")
+                    return None
+            except Exception as e:
+                st.error(f"PDF read error: {e}")
+                return None
+        else:
+            st.info("Image upload detected. We'll use this as context for the AI.")
+            # Return a placeholder -- app.py can send the image bytes to the AI
+            return f"[Image uploaded: {uploaded.name}]"
+
+
+# ---------------------------------------------------------------------------
+# Compare Mode result display
+# ---------------------------------------------------------------------------
+
+def render_compare_result(compare_data: dict):
+    """
+    Render a structured Compare Mode result from parse_compare_material().
+    `compare_data` has keys: topic_a, topic_b, overview, similarities,
+    differences, use_cases, summary.
+    """
+    topic_a = compare_data.get("topic_a", "Topic A")
+    topic_b = compare_data.get("topic_b", "Topic B")
+
+    with st.container(key="compare-result"):
+        # Header badges
+        st.markdown(
+            f"""
+            <div class="compare-header">
+                <div class="compare-topic-badge topic-a">{html.escape(topic_a)}</div>
+                <div class="compare-vs">VS</div>
+                <div class="compare-topic-badge topic-b">{html.escape(topic_b)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        sections = [
+            ("overview", "🔍 Overview"),
+            ("similarities", "🤝 Similarities"),
+            ("differences", "⚡ Key Differences"),
+            ("use_cases", "🎯 When to Use Which"),
+            ("summary", "📌 Quick Summary"),
+        ]
+
+        for key, label in sections:
+            content = compare_data.get(key, "")
+            if not content:
+                continue
+            with st.container(key=f"compare-card-{key}"):
+                st.markdown(f'<div class="compare-section-title">{label}</div>', unsafe_allow_html=True)
+                st.markdown(content)
+
+
+# ---------------------------------------------------------------------------
+# Study schedule / spaced repetition panel
+# ---------------------------------------------------------------------------
+
+def render_study_schedule(suggestions: list, topic_key: str):
+    """
+    Render the spaced-repetition study schedule panel in the sidebar.
+    `suggestions` is a list of {"topic": str, "reason": str}.
+    Clicking a topic sets st.session_state[topic_key] and reruns.
+    """
+    if not suggestions:
+        return
+
+    with st.container(key="study-schedule"):
+        st.markdown(
+            '<div class="sidebar-section-label">📅 Review Today</div>',
+            unsafe_allow_html=True,
+        )
+        for i, item in enumerate(suggestions):
+            topic = item.get("topic", "")
+            reason = item.get("reason", "")
+            st.markdown(
+                f'<div class="schedule-item">'
+                f'<div class="schedule-topic">{html.escape(topic)}</div>'
+                f'<div class="schedule-reason">{html.escape(reason)}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Study {topic}", key=f"schedule_{i}_{_safe_filename(topic)}", use_container_width=True):
+                st.session_state[topic_key] = topic
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Theme toggle (dark/light)
+# ---------------------------------------------------------------------------
+
+def render_theme_toggle():
+    """
+    Render a dark/light theme toggle button in the sidebar.
+    Stores current theme in st.session_state["theme"].
+    Injects a <style> override when light mode is active.
+    """
+    if "theme" not in st.session_state:
+        st.session_state.theme = "dark"
+
+    is_dark = st.session_state.theme == "dark"
+    label = "☀️ Light Mode" if is_dark else "🌙 Dark Mode"
+
+    with st.container(key="theme-toggle"):
+        if st.button(label, key="theme_toggle_btn", use_container_width=True):
+            st.session_state.theme = "light" if is_dark else "dark"
+            st.rerun()
+
+    if st.session_state.theme == "light":
+        st.markdown(
+            """
+            <style>
+            .stApp { background-color: #F0F4FF !important; }
+            .stApp, .stApp * { color: #0F172A; }
+            [data-testid="stSidebar"] { background: rgba(240,244,255,0.96) !important; }
+            div[class*="st-key-section-card-"], .st-key-section-card {
+                background: rgba(255,255,255,0.90) !important;
+                border-color: rgba(0,0,0,0.08) !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Onboarding tour (first login only)
+# ---------------------------------------------------------------------------
+
+def render_onboarding_tour():
+    """
+    Render a simple first-login feature walkthrough using st.info boxes.
+    Called from app.py on the first session after login.
+    Marks tour as done in st.session_state so it only shows once.
+    """
+    if st.session_state.get("_tour_done"):
+        return
+
+    with st.expander("👋 Quick tour — what can you do here?", expanded=True):
+        st.markdown("""
+**Welcome to AI Study Assistant!** Here's what you can do:
+
+- 🔍 **Search any topic** — type anything in the box and hit Generate
+- 🎯 **Pick a difficulty** — Beginner, Intermediate, or Advanced
+- 📚 **3 study modes** — Learn, Revision, or Exam (mixed MCQ + short-answer quiz)
+- ⭐ **Favourite topics** — save topics for quick access in the sidebar
+- 💬 **Ask follow-ups** — dive deeper into any section
+- 📊 **Compare two topics** — use Compare Mode in the sidebar
+- 🎤 **Voice input** — speak your topic instead of typing
+- 📄 **Upload a PDF** — study directly from your notes
+- 🔥 **Build a streak** — come back daily to keep your streak alive!
+        """)
+        if st.button("Got it! Let's start ✨", key="tour_done_btn", type="primary"):
+            st.session_state._tour_done = True
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Keyboard shortcuts (injected JS)
+# ---------------------------------------------------------------------------
+
+def render_keyboard_shortcuts(generate_trigger_key: str = "topic_input"):
+    """
+    Inject a small JS snippet via st.html that registers keyboard shortcuts:
+    - Ctrl+/ or Cmd+/ : focus the topic input
+    - Ctrl+D          : toggle dark/light theme (calls theme toggle)
+
+    Uses st.html(unsafe_allow_html=True) which is supported in Streamlit 1.58+.
+    The shortcuts are cosmetic / UX helpers -- they don't need to interact
+    with Streamlit's Python layer so plain JS is fine.
+    """
+    st.html("""
+    <script>
+    (function() {
+        document.addEventListener('keydown', function(e) {
+            const ctrl = e.ctrlKey || e.metaKey;
+            // Ctrl+/ -> focus topic input
+            if (ctrl && e.key === '/') {
+                e.preventDefault();
+                const inputs = document.querySelectorAll('input[type="text"]');
+                if (inputs.length > 0) inputs[0].focus();
+            }
+        });
+    })();
+    </script>
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -849,3 +1164,16 @@ def render_clear_history_button() -> bool:
     """Render the 'Clear History' sidebar button. Returns True if clicked."""
     with st.container(key="clear-history-btn"):
         return st.button("🗑️ Clear History", use_container_width=True)
+
+
+def render_sidebar_compare_inputs() -> tuple:
+    """
+    Render two text inputs in the sidebar for Compare Mode.
+    Returns (topic_a, topic_b, clicked) -- clicked is True if the
+    Compare button was pressed this run.
+    """
+    st.markdown('<div class="sidebar-section-label">🔄 Compare Mode</div>', unsafe_allow_html=True)
+    topic_a = st.text_input("Topic A", key="compare_topic_a", placeholder="e.g. TCP")
+    topic_b = st.text_input("Topic B", key="compare_topic_b", placeholder="e.g. UDP")
+    clicked = st.button("⚡ Compare", key="compare_btn", use_container_width=True, type="primary")
+    return topic_a, topic_b, clicked

@@ -358,3 +358,168 @@ def check_answer(user_answer: str, correct_answer: str):
         verdict = "incorrect"
 
     return verdict, round(score, 2)
+
+
+# ---------------------------------------------------------------------------
+# Compare Mode parser
+# ---------------------------------------------------------------------------
+
+# Import Compare Mode section headers (defined in prompts.py).
+# Done here rather than at module top to avoid a circular-import risk if
+# prompts.py ever imported from parser.py.
+from backend.prompts import (  # noqa: E402
+    COMPARE_SECTION_HEADERS,
+    SECTION_COMPARE_OVERVIEW,
+    SECTION_COMPARE_SIMILARITIES,
+    SECTION_COMPARE_DIFFERENCES,
+    SECTION_COMPARE_USECASES,
+    SECTION_COMPARE_SUMMARY,
+)
+
+# Aliases the model might use for Compare Mode sections.
+_COMPARE_HEADER_ALIASES = {
+    "overview": SECTION_COMPARE_OVERVIEW,
+    "introduction": SECTION_COMPARE_OVERVIEW,
+    "similarities": SECTION_COMPARE_SIMILARITIES,
+    "similar": SECTION_COMPARE_SIMILARITIES,
+    "key differences": SECTION_COMPARE_DIFFERENCES,
+    "differences": SECTION_COMPARE_DIFFERENCES,
+    "when to use which": SECTION_COMPARE_USECASES,
+    "when to use": SECTION_COMPARE_USECASES,
+    "use cases": SECTION_COMPARE_USECASES,
+    "quick summary": SECTION_COMPARE_SUMMARY,
+    "summary": SECTION_COMPARE_SUMMARY,
+    "conclusion": SECTION_COMPARE_SUMMARY,
+}
+
+
+def _match_compare_header(header_text: str):
+    normalized = header_text.strip().lower()
+    for canonical in COMPARE_SECTION_HEADERS:
+        if canonical.lower() == normalized:
+            return canonical
+    return _COMPARE_HEADER_ALIASES.get(normalized)
+
+
+def parse_compare_material(raw_text: str, topic_a: str = "", topic_b: str = "") -> dict:
+    """
+    Parse a Compare Mode AI response into a structured dict:
+
+    {
+        "topic_a": str,
+        "topic_b": str,
+        "overview": str,
+        "similarities": str,
+        "differences": str,       # contains a markdown table
+        "use_cases": str,
+        "summary": str,
+        "raw": str,
+    }
+
+    Uses the same heading-scan approach as parse_sections() but maps
+    to COMPARE_SECTION_HEADERS instead of SECTION_HEADERS.
+    """
+    sections = {header: "" for header in COMPARE_SECTION_HEADERS}
+
+    if not raw_text or not raw_text.strip():
+        return {
+            "topic_a": topic_a,
+            "topic_b": topic_b,
+            "overview": "",
+            "similarities": "",
+            "differences": "",
+            "use_cases": "",
+            "summary": "",
+            "raw": raw_text or "",
+        }
+
+    matches = list(_HEADING_PATTERN.finditer(raw_text))
+
+    if not matches:
+        sections[SECTION_COMPARE_OVERVIEW] = raw_text.strip()
+    else:
+        preamble = raw_text[: matches[0].start()].strip()
+        if preamble:
+            sections[SECTION_COMPARE_OVERVIEW] = preamble
+
+        for i, match in enumerate(matches):
+            header_text = match.group(1)
+            start = match.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(raw_text)
+            content = raw_text[start:end].strip()
+
+            canonical = _match_compare_header(header_text)
+            if canonical is None:
+                # Attach unknown sections to overview rather than dropping.
+                sections[SECTION_COMPARE_OVERVIEW] = (
+                    f"{sections[SECTION_COMPARE_OVERVIEW]}\n\n{content}".strip()
+                )
+                continue
+
+            if sections[canonical]:
+                sections[canonical] = f"{sections[canonical]}\n\n{content}"
+            else:
+                sections[canonical] = content
+
+    return {
+        "topic_a": topic_a,
+        "topic_b": topic_b,
+        "overview": sections.get(SECTION_COMPARE_OVERVIEW, "").strip(),
+        "similarities": sections.get(SECTION_COMPARE_SIMILARITIES, "").strip(),
+        "differences": sections.get(SECTION_COMPARE_DIFFERENCES, "").strip(),
+        "use_cases": sections.get(SECTION_COMPARE_USECASES, "").strip(),
+        "summary": sections.get(SECTION_COMPARE_SUMMARY, "").strip(),
+        "raw": raw_text or "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Study schedule / spaced repetition response parser
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402 -- stdlib, no circular risk
+
+
+def parse_study_schedule(raw_response: str) -> list:
+    """
+    Parse the JSON array returned by ai_handler.get_study_suggestions().
+
+    Expected format from the model (see prompts.build_study_schedule_prompt):
+        [{"topic": "...", "reason": "..."}, ...]
+
+    Returns a list of {"topic": str, "reason": str} dicts.
+    Falls back to [] if the response can't be parsed -- never raises.
+    """
+    if not raw_response or not raw_response.strip():
+        return []
+
+    # Strip any accidental markdown fences the model might have added.
+    text = raw_response.strip()
+    text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE)
+    text = text.strip()
+
+    # Find the first [...] array in the response.
+    array_match = re.search(r'\[.*\]', text, re.DOTALL)
+    if not array_match:
+        return []
+
+    try:
+        items = _json.loads(array_match.group(0))
+    except (_json.JSONDecodeError, ValueError):
+        return []
+
+    if not isinstance(items, list):
+        return []
+
+    # Validate and clean each item.
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic", "")).strip()
+        reason = str(item.get("reason", "")).strip()
+        if topic:
+            result.append({"topic": topic, "reason": reason})
+
+    return result

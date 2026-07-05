@@ -1,209 +1,282 @@
 """
 utils/storage.py
 
-Handles persistence of:
-- Username (per-device)
-- Search History (per-device)
-- Favorites (per-device)
-- A developer-facing usage log (name + topic + timestamp), sent to a
-  Google Form so the developer can review usage across all devices.
+Handles all per-user persistence and developer logging for the AI Study
+Assistant.
 
-PER-DEVICE STORAGE -- HOW IT WORKS
------------------------------------
-Earlier versions of this app tried to use browser cookies (via
-streamlit-local-storage / extra-streamlit-components) for per-device
-persistence. Both libraries rely on an async `declare_component` round
-trip to read the browser's cookie jar, which on Streamlit Cloud
-intermittently returned an incomplete/empty cookie set on page load --
-causing usernames, history, and favorites to randomly "reset".
+AUTHENTICATION
+--------------
+Uses Streamlit's built-in st.login() / st.logout() / st.user (available
+since Streamlit 1.40+). The app requires Google login -- no anonymous
+access. After login, st.user.email is the stable, permanent identifier
+for each user. No more random device UUIDs or ?device= query params.
 
-This version replaces that entirely with a simple, fully synchronous
-approach:
+STORAGE BACKEND: SUPABASE
+--------------------------
+All per-user data (username, history, favourites, streak) is stored in a
+Supabase Postgres table called `devices`, keyed by the user's email:
 
-1. Each browser gets a random `device` ID, stored in the page's URL via
-   `st.query_params`. Reading/writing query params is synchronous and
-   built into Streamlit core -- no component round trip, no race
-   conditions.
-2. All per-device data (username, history, favorites) is stored
-   server-side in a single JSON file (data/devices.json), keyed by that
-   device ID:
+    user_id      TEXT  PRIMARY KEY   -- the user's Google email
+    username     TEXT                -- display name (from Google or custom)
+    history      JSONB               -- list of {topic, difficulty, study_mode}
+    favourites   JSONB               -- list of {topic, difficulty, study_mode}
+    streak_count INT4                -- consecutive daily study streak
+    last_active  TEXT                -- ISO date string of last activity
 
-       {
-         "<device_id>": {
-             "username": "Rudra",
-             "history":   [ {"topic", "difficulty", "study_mode"}, ... ],
-             "favorites": [ {"topic", "difficulty", "study_mode"}, ... ]
-         },
-         ...
-       }
+Supabase persists forever (survives reboots and redeploys), unlike the old
+data/devices.json filesystem approach which reset on every redeploy.
 
-KNOWN TRADEOFF (free hosting, no database)
--------------------------------------------
-On Streamlit Community Cloud, the filesystem is ephemeral: data/devices.json
-persists while the app instance is running, but is WIPED on every reboot
-or redeploy. This means a redeploy resets everyone's saved name/history/
-favorites back to "new device" (they'll be asked for their name again).
-This is an accepted tradeoff for a free-tier deployment with no external
-database. If this becomes annoying, the fix is to point this file's
-read/write functions at an external store (e.g. a free-tier hosted
-Postgres/SQLite-over-HTTP service) -- the function signatures below
-wouldn't need to change.
+All Supabase calls are wrapped in try/except -- a database hiccup never
+crashes the app. Falls back to safe empty defaults if the DB is unreachable.
 
 DEVELOPER USAGE LOG
---------------------
-Every time a user generates study material, `log_event(name, topic)` is
-called. This fires a best-effort POST to a Google Form's `/formResponse`
-endpoint, which appends a row (name, topic, timestamp-by-Forms) to a
-linked Google Sheet that only the developer can see. This is unaffected
-by the storage rewrite above and survives reboots (it's external).
-
-This is fire-and-forget:
-- Wrapped in try/except -- a network hiccup or blocked request NEVER
-  breaks the app or the user's experience.
-- Short timeout so it can't noticeably delay the UI.
-- The user is never shown this data and it does not affect their
-  local history/favorites in any way.
+-------------------
+Every successful generation fires a best-effort POST to a Google Form,
+appending a row (name, topic, timestamp) to a linked Google Sheet.
+Wrapped in try/except -- never blocks the UI.
 """
 
 import os
 import json
-import uuid
+import datetime
 import requests
 import streamlit as st
+from supabase import create_client, Client
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Device-data file (per-device username/history/favorites)
+# Supabase client (lazy singleton cached in session_state)
 # ---------------------------------------------------------------------------
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DATA_DIR = os.path.join(_BASE_DIR, "data")
-_DEVICES_FILE = os.path.join(_DATA_DIR, "devices.json")
 
+_TABLE = "devices"
 MAX_HISTORY_ITEMS = 10
 
-_DEFAULT_DEVICE = {"username": "", "history": [], "favorites": []}
 
-
-def _ensure_data_file() -> None:
-    os.makedirs(_DATA_DIR, exist_ok=True)
-    if not os.path.exists(_DEVICES_FILE):
-        _write_all({})
-
-
-def _read_all() -> dict:
+def _supabase() -> Client:
     """
-    Load data/devices.json. Returns {} if the file is missing,
-    unreadable, or corrupted -- never raises.
+    Return a cached Supabase client. Created once per session, then reused.
+    Reads credentials from st.secrets (deployed) with fallback to .env (local).
     """
-    _ensure_data_file()
+    if "_supabase_client" not in st.session_state:
+        url = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY", "")
+        if not url or not key:
+            st.error("Supabase credentials missing. Check your secrets / .env file.")
+            st.stop()
+        st.session_state._supabase_client = create_client(url, key)
+    return st.session_state._supabase_client
+
+
+# ---------------------------------------------------------------------------
+# Low-level DB helpers
+# ---------------------------------------------------------------------------
+
+def _get_record(user_id: str) -> dict:
+    """
+    Fetch this user's row from Supabase. Returns a dict with all fields
+    backfilled to safe defaults if the row doesn't exist or DB is down.
+    Never raises.
+    """
+    defaults = {
+        "user_id": user_id,
+        "username": "",
+        "history": [],
+        "favourites": [],
+        "streak_count": 0,
+        "last_active": "",
+    }
     try:
-        with open(_DEVICES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
+        resp = (
+            _supabase()
+            .table(_TABLE)
+            .select("*")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if resp.data:
+            row = resp.data[0]
+            # Supabase returns JSONB as Python objects already -- no need to
+            # json.loads(). But defensively coerce if they somehow come back
+            # as strings.
+            for field in ("history", "favourites"):
+                if isinstance(row.get(field), str):
+                    try:
+                        row[field] = json.loads(row[field])
+                    except (ValueError, TypeError):
+                        row[field] = []
+            defaults.update(row)
+    except Exception:
+        pass
+    return defaults
 
-    if not isinstance(data, dict):
-        return {}
-    return data
 
-
-def _write_all(data: dict) -> bool:
+def _save_record(record: dict) -> None:
     """
-    Write data to data/devices.json atomically (write to a temp file,
-    then replace) so a crash mid-write can't corrupt the file. Returns
-    True on success, False otherwise -- never raises.
+    Upsert this user's record to Supabase. Never raises -- a DB failure
+    is silently swallowed so the app keeps working.
     """
-    os.makedirs(_DATA_DIR, exist_ok=True)
-    tmp_path = _DEVICES_FILE + ".tmp"
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, _DEVICES_FILE)
+        _supabase().table(_TABLE).upsert(record).execute()
+    except Exception:
+        pass
+
+
+def _user_id() -> str:
+    """Return the current logged-in user's email (our stable user identifier)."""
+    return st.session_state._user_id
+
+
+# ---------------------------------------------------------------------------
+# Authentication (Google login via Streamlit's built-in auth)
+# ---------------------------------------------------------------------------
+
+def init_auth() -> bool:
+    """
+    Call this at the very top of app.py (after set_page_config).
+
+    - If the user is not logged in: show a login page and return False.
+      The caller should call st.stop() immediately after.
+    - If the user IS logged in: populate session state with user info,
+      initialize their Supabase record if needed, update streak, and
+      return True.
+
+    Uses Streamlit's built-in st.login() / st.user which reads from
+    st.secrets[auth] and st.secrets[auth.google].
+    """
+    # Already initialized this session -- fast path.
+    if st.session_state.get("_auth_done"):
         return True
-    except OSError:
+
+    user = st.user
+
+    if not user.is_logged_in:
         return False
 
+    # User is logged in -- populate session state.
+    email = user.email
+    st.session_state._user_id = email
 
-def _get_device_record(device_id: str) -> dict:
-    """Return this device's record, backfilled with defaults."""
-    all_data = _read_all()
-    record = all_data.get(device_id, {})
-    if not isinstance(record, dict):
-        record = {}
+    # Load or create their Supabase record.
+    record = _get_record(email)
 
-    record.setdefault("username", "")
-    record.setdefault("history", [])
-    record.setdefault("favorites", [])
+    # Use Google display name as default username if not set yet.
+    if not record.get("username"):
+        record["username"] = user.name or email.split("@")[0]
 
-    if not isinstance(record["history"], list):
-        record["history"] = []
-    if not isinstance(record["favorites"], list):
-        record["favorites"] = []
-    if not isinstance(record["username"], str):
-        record["username"] = ""
+    # Update streak.
+    record = _update_streak(record)
+
+    # Save back (covers both new-user creation and streak update).
+    _save_record(record)
+
+    # Cache username in session_state for fast access.
+    st.session_state._username = record["username"]
+    st.session_state._auth_done = True
+
+    return True
+
+
+def render_login_page() -> None:
+    """
+    Render a clean, minimal login page. Called from app.py when
+    init_auth() returns False.
+    """
+    st.markdown(
+        """
+        <style>
+        .login-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 70vh;
+            gap: 1.5rem;
+        }
+        .login-title {
+            font-size: 2.4rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #93C5FD, #A78BFA, #F0ABFC);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-align: center;
+        }
+        .login-subtitle {
+            color: rgba(255,255,255,0.6);
+            font-size: 1.05rem;
+            text-align: center;
+        }
+        </style>
+        <div class="login-wrapper">
+            <div class="login-title">🧠 AI Study Assistant</div>
+            <div class="login-subtitle">
+                Your intelligent companion for learning anything, anytime.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        st.login("google")
+
+
+def render_logout_button() -> None:
+    """Render a small logout button (call from the sidebar)."""
+    if st.button("🚪 Logout", key="logout_btn", use_container_width=True):
+        st.logout()
+
+
+# ---------------------------------------------------------------------------
+# Streak tracking
+# ---------------------------------------------------------------------------
+
+def _update_streak(record: dict) -> dict:
+    """
+    Update the streak_count and last_active fields.
+
+    Rules:
+    - If last_active is today: streak unchanged (already counted today).
+    - If last_active was yesterday: streak += 1 (kept it going).
+    - Anything older (or empty): streak resets to 1 (new streak started).
+    """
+    today = datetime.date.today().isoformat()
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    last = record.get("last_active", "")
+
+    if last == today:
+        pass  # Already updated today, don't touch streak
+    elif last == yesterday:
+        record["streak_count"] = (record.get("streak_count") or 0) + 1
+        record["last_active"] = today
+    else:
+        record["streak_count"] = 1
+        record["last_active"] = today
 
     return record
 
 
-def _save_device_record(device_id: str, record: dict) -> None:
-    all_data = _read_all()
-    all_data[device_id] = record
-    _write_all(all_data)
-
-
-# ---------------------------------------------------------------------------
-# Device ID (via URL query params -- synchronous, no component round trip)
-# ---------------------------------------------------------------------------
-
-def init_storage() -> str:
-    """
-    Ensure this browser/tab has a `device` ID in the URL's query params,
-    creating one (and storing an empty record for it) if needed.
-
-    Must be called once near the top of app.py, before any of the
-    get_*/set_* helpers below. Returns the device ID, and also caches it
-    in st.session_state for fast access within this session.
-    """
-    if "_device_id" in st.session_state:
-        return st.session_state._device_id
-
-    device_id = st.query_params.get("device")
-
-    if not device_id:
-        device_id = uuid.uuid4().hex
-        st.query_params["device"] = device_id
-
-        # Make sure a record exists for this brand-new device so later
-        # reads don't have to special-case "not yet in the file".
-        all_data = _read_all()
-        if device_id not in all_data:
-            all_data[device_id] = dict(_DEFAULT_DEVICE)
-            _write_all(all_data)
-
-    st.session_state._device_id = device_id
-    return device_id
-
-
-def _device_id() -> str:
-    return st.session_state._device_id
+def get_streak() -> int:
+    """Return the current user's study streak count."""
+    record = _get_record(_user_id())
+    return record.get("streak_count", 0)
 
 
 # ---------------------------------------------------------------------------
 # Developer usage log (Google Form webhook)
 # ---------------------------------------------------------------------------
-# Replace these with your own Form's action URL + entry IDs.
+
 _FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdta0n2805kNlOtWE9AAnVQntiTBz16DMutH5rdAY2FXvGbvA/formResponse"
 _FORM_ENTRY_NAME = "entry.427107502"
 _FORM_ENTRY_TOPIC = "entry.1511327583"
-_LOG_TIMEOUT = 3  # seconds
+_LOG_TIMEOUT = 3
 
 
 def log_event(name: str, topic: str) -> None:
     """
-    Best-effort log of a search event to the developer's Google Form.
-
-    Never raises and never blocks the UI for long -- any failure
-    (network error, timeout, blocked domain, etc.) is silently ignored.
+    Best-effort POST to the developer's Google Form. Never raises.
     """
     try:
         requests.post(
@@ -219,147 +292,134 @@ def log_event(name: str, topic: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Username (per-device onboarding)
+# Username
 # ---------------------------------------------------------------------------
 
 def get_username() -> str:
-    """Return the saved username for this device, or "" if not set yet."""
-    record = _get_device_record(_device_id())
-    return record.get("username", "")
+    """Return the cached username for the current session."""
+    return st.session_state.get("_username", "")
 
 
 def set_username(name: str) -> None:
-    """Save the username for this device (persists until app reboot)."""
+    """Update the display name for this user (persists to Supabase)."""
     name = (name or "").strip()
     if not name:
         return
-    record = _get_device_record(_device_id())
+    st.session_state._username = name
+    record = _get_record(_user_id())
     record["username"] = name
-    _save_device_record(_device_id(), record)
+    _save_record(record)
 
 
 # ---------------------------------------------------------------------------
-# History (per-device)
+# History (per-user)
 # ---------------------------------------------------------------------------
 
 def get_history() -> list:
-    """Return this device's search history, most-recent-first."""
-    record = _get_device_record(_device_id())
-    return record.get("history", [])
+    """Return this user's search history, most-recent-first."""
+    return _get_record(_user_id()).get("history", [])
 
 
 def add_to_history(topic: str, difficulty: str, study_mode: str) -> None:
     """
-    Add/move `topic` to the front of this device's history.
+    Add/move `topic` to the front of this user's history.
     De-duplicated case-insensitively, capped at MAX_HISTORY_ITEMS.
     """
-    record = _get_device_record(_device_id())
+    record = _get_record(_user_id())
     history = record.get("history", [])
 
     history = [
         item for item in history
         if (item.get("topic") or "").strip().lower() != topic.strip().lower()
     ]
-
     history.insert(0, {
         "topic": topic,
         "difficulty": difficulty,
         "study_mode": study_mode,
     })
-
     record["history"] = history[:MAX_HISTORY_ITEMS]
-    _save_device_record(_device_id(), record)
+    _save_record(record)
 
 
 def clear_history() -> None:
-    """Clear this device's search history."""
-    record = _get_device_record(_device_id())
+    """Clear this user's search history."""
+    record = _get_record(_user_id())
     record["history"] = []
-    _save_device_record(_device_id(), record)
+    _save_record(record)
 
 
 # ---------------------------------------------------------------------------
-# Favorites (per-device)
+# Favourites (per-user)
 # ---------------------------------------------------------------------------
 
 def get_favorites() -> list:
-    """Return this device's favorites."""
-    record = _get_device_record(_device_id())
-    return record.get("favorites", [])
+    """Return this user's favourites."""
+    return _get_record(_user_id()).get("favourites", [])
 
 
 def is_favorite(topic: str) -> bool:
-    topic = (topic or "").strip().lower()
+    topic_norm = (topic or "").strip().lower()
     return any(
-        (item.get("topic") or "").strip().lower() == topic
+        (item.get("topic") or "").strip().lower() == topic_norm
         for item in get_favorites()
     )
 
 
 def toggle_favorite(topic: str, difficulty: str, study_mode: str) -> None:
-    """Add `topic` to favorites if absent, remove it if present."""
-    record = _get_device_record(_device_id())
-    favorites = record.get("favorites", [])
+    """Add `topic` to favourites if absent, remove it if present."""
+    record = _get_record(_user_id())
+    favourites = record.get("favourites", [])
     topic_norm = (topic or "").strip().lower()
 
     existing = next(
-        (item for item in favorites if (item.get("topic") or "").strip().lower() == topic_norm),
+        (item for item in favourites
+         if (item.get("topic") or "").strip().lower() == topic_norm),
         None,
     )
 
     if existing:
-        favorites = [item for item in favorites if item is not existing]
+        favourites = [item for item in favourites if item is not existing]
     else:
-        favorites.append({
+        favourites.append({
             "topic": topic,
             "difficulty": difficulty,
             "study_mode": study_mode,
         })
 
-    record["favorites"] = favorites
-    _save_device_record(_device_id(), record)
+    record["favourites"] = favourites
+    _save_record(record)
 
 
 def remove_favorite(topic: str) -> None:
-    """Remove a topic from favorites, if present."""
+    """Remove a topic from favourites, if present."""
     topic_norm = (topic or "").strip().lower()
     if not topic_norm:
         return
-    record = _get_device_record(_device_id())
-    record["favorites"] = [
-        item for item in record.get("favorites", [])
+    record = _get_record(_user_id())
+    record["favourites"] = [
+        item for item in record.get("favourites", [])
         if (item.get("topic") or "").strip().lower() != topic_norm
     ]
-    _save_device_record(_device_id(), record)
+    _save_record(record)
 
 
 # ---------------------------------------------------------------------------
-# Secret personalization mode
+# Special user check (email-based, checked after login)
 # ---------------------------------------------------------------------------
 
-# Names that trigger the special personalized greeting/reveal screen.
-# Stored normalized (lowercase, single-spaced) for robust matching.
-_SPECIAL_NAMES = {
-    "kavya",
-    "kavyaa",
-    "kavya sharma",
-    "bubu",
-    "bulbul",
+# Email addresses that trigger the special personalized experience.
+# Add the real email here -- it's checked after Google login so it's exact.
+_SPECIAL_EMAILS = {
+    "kavyachoudharykc2005@gmail.com"   # replace with the real email
 }
 
 
-def _normalize_name(name: str) -> str:
-    """Lowercase, strip, and collapse internal whitespace for comparison."""
-    return " ".join((name or "").strip().lower().split())
-
-
-def is_bhabhi_mode(name: str) -> bool:
+def is_special_user() -> bool:
     """
-    Return True if `name` matches one of the special-recognition names
-    (case-insensitive, whitespace-tolerant).
-
-    This check is intentionally an exact match against a small fixed list
-    after normalization -- it will NOT match unrelated names, substrings,
-    or partial matches, so it can never trigger by accident.
+    Return True if the logged-in user's Google email is in the special list.
+    Exact match only -- can never false-trigger on a similar name.
     """
-    return _normalize_name(name) in _SPECIAL_NAMES
+    try:
+        return st.user.email in _SPECIAL_EMAILS
+    except Exception:
+        return False
