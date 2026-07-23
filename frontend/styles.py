@@ -3,7 +3,7 @@ frontend/styles.py
 
 All custom CSS for the AI Study Assistant's premium, futuristic, colorful
 dark theme -- deep-space gradients, glassmorphism cards, glowing accents,
-pill-style tabs, a styled sidebar, and a secret romantic "reveal" screen.
+pill-style tabs, a styled sidebar.
 
 This module exposes ONE function, inject_custom_css(), which app.py calls
 once near the top of the script.
@@ -219,106 +219,6 @@ section.main > div {
     margin-top: 0.5rem;
 }
 
-
-/* ==========================================================================
-   SECRET ROMANTIC REVEAL SCREEN
-   (components.render_bhabhi_reveal -> key="bhabhi-reveal")
-   ========================================================================== */
-.st-key-bhabhi-reveal {
-    position: relative;
-    min-height: 70vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 28px;
-    overflow: hidden;
-    padding: 2.5rem 1rem;
-    background:
-        radial-gradient(ellipse 60% 50% at 25% 15%, rgba(244, 114, 182, 0.35), transparent 60%),
-        radial-gradient(ellipse 55% 50% at 80% 85%, rgba(167, 139, 250, 0.30), transparent 60%),
-        linear-gradient(160deg, #2A0E2E 0%, #4A1942 55%, #2A0E2E 100%);
-    animation: fadeInUp 0.8s ease;
-}
-
-/* Floating heart/sparkle particles -- rendered as plain spans by
-   components.render_bhabhi_reveal, positioned via inline style */
-.romantic-particle {
-    position: absolute;
-    font-size: 1.4rem;
-    opacity: 0;
-    pointer-events: none;
-    animation: floatUp 9s linear infinite;
-}
-
-.romantic-card {
-    position: relative;
-    z-index: 2;
-    max-width: 560px;
-    width: 100%;
-    margin: 0 auto;
-    text-align: center;
-    padding: 2.75rem 2rem;
-    border-radius: 24px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(244, 114, 182, 0.35);
-    backdrop-filter: blur(16px);
-    box-shadow: 0 0 60px rgba(244, 114, 182, 0.25), 0 20px 60px rgba(0, 0, 0, 0.4);
-}
-
-.romantic-hearts {
-    font-size: 2.1rem;
-    margin-bottom: 0.5rem;
-    animation: pulseScale 2.2s ease-in-out infinite;
-}
-
-.romantic-title {
-    font-family: 'Sora', sans-serif;
-    font-weight: 800;
-    font-size: 2rem;
-    margin: 0.2rem 0 0.9rem;
-    line-height: 1.3;
-    background: linear-gradient(135deg, #ffffff 0%, #F9A8D4 60%, #F472B6 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-}
-
-.romantic-divider {
-    width: 80px;
-    height: 1px;
-    margin: 0 auto 0.9rem;
-    background: linear-gradient(90deg, transparent, rgba(244, 114, 182, 0.6), transparent);
-}
-
-.romantic-subtitle {
-    color: #F9D7EA;
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin: 0 0 0.6rem;
-}
-
-.romantic-text {
-    color: rgba(255, 255, 255, 0.82);
-    line-height: 1.7;
-    font-size: 0.98rem;
-    margin: 0 0 1.6rem;
-}
-
-/* The "Enter Study Space" button, scoped via key="bhabhi-enter-btn" */
-.st-key-bhabhi-enter-btn .stButton button {
-    background: linear-gradient(135deg, #F472B6, #EC4899) !important;
-    border: none !important;
-    color: #fff !important;
-    font-weight: 700 !important;
-    font-size: 1rem !important;
-    padding: 0.65rem 2rem !important;
-    border-radius: 999px !important;
-    box-shadow: 0 8px 24px rgba(244, 114, 182, 0.4) !important;
-}
-.st-key-bhabhi-enter-btn .stButton button:hover {
-    transform: translateY(-2px) scale(1.02);
-    box-shadow: 0 12px 32px rgba(244, 114, 182, 0.55) !important;
-}
 
 
 /* ==========================================================================
@@ -870,8 +770,7 @@ div[class*="st-key-section-card-"],
     .onboarding-card { padding: 1.75rem 1.25rem; }
     .onboarding-title { font-size: 1.6rem; }
 
-    .romantic-card { padding: 1.75rem 1.25rem; }
-    .romantic-title { font-size: 1.5rem; }
+    
 
     .st-key-main-tabs div[role="radiogroup"] label {
         font-size: 0.82rem;

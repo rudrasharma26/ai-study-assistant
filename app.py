@@ -207,8 +207,8 @@ C.render_keyboard_shortcuts()
 # Greeting + hero
 # ---------------------------------------------------------------------------
 username = storage.get_username()
-is_special = storage.is_special_user()
-C.render_greeting_banner(username, is_special=is_special)
+
+C.render_greeting_banner(username)
 C.render_hero()
 
 

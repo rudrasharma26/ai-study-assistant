@@ -403,23 +403,3 @@ def remove_favorite(topic: str) -> None:
     _save_record(record)
 
 
-# ---------------------------------------------------------------------------
-# Special user check (email-based, checked after login)
-# ---------------------------------------------------------------------------
-
-# Email addresses that trigger the special personalized experience.
-# Add the real email here -- it's checked after Google login so it's exact.
-_SPECIAL_EMAILS = {
-    "kavyachoudharykc2005@gmail.com"   # replace with the real email
-}
-
-
-def is_special_user() -> bool:
-    """
-    Return True if the logged-in user's Google email is in the special list.
-    Exact match only -- can never false-trigger on a similar name.
-    """
-    try:
-        return st.user.email in _SPECIAL_EMAILS
-    except Exception:
-        return False

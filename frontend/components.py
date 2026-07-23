@@ -36,14 +36,14 @@ presentation.
 
 import html
 import json
-import random
+
 import re
 import uuid
 
 import streamlit as st
 
 from backend import ai_handler
-from backend.prompts import SECTION_HEADERS, COMPARE_SECTION_HEADERS
+from backend.prompts import SECTION_HEADERS
 from utils import export
 
 
@@ -122,18 +122,13 @@ def render_streak_badge(streak: int):
 # Greeting banner
 # ---------------------------------------------------------------------------
 
-def render_greeting_banner(username: str, is_special: bool = False):
+def render_greeting_banner(username: str):
     """
     Render the personalized greeting banner shown above the hero.
-    `is_special` triggers a custom greeting for the special user.
     """
-    if is_special:
-        title = "Hello Bhabhi Ji 😌✨"
-        subtitle = "What can I do for you today?"
-    else:
-        display_name = html.escape((username or "").strip() or "there")
-        title = f"Hello {display_name} 👋"
-        subtitle = "Ready to learn something amazing today?"
+    display_name = html.escape((username or "").strip() or "there")
+    title = f"Hello {display_name} 👋"
+    subtitle = "Ready to learn something amazing today?"
 
     with st.container(key="greeting-banner"):
         st.markdown(
@@ -219,7 +214,7 @@ def render_topic_chips(topic_key: str, current_topic: str = ""):
 
     # For the carousel we need enough chips to fill the width and loop --
     # duplicate the list so the CSS animation loops seamlessly.
-    doubled = suggestions + suggestions
+    
 
     with st.container(key="topic-chips"):
         st.markdown(f'<div class="chip-label">{label}</div>', unsafe_allow_html=True)
