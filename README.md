@@ -1,4 +1,4 @@
-# AI Study Assistant
+# StudyVerse AI
 
 An AI-powered study companion built using **Streamlit** that helps students learn, revise, and assess their understanding of academic topics through intelligent explanations, summaries, quizzes, and note exports.
 
@@ -45,11 +45,12 @@ Users can:
 
 ### Persistent Storage
 
-The application stores user activity locally, including:
+User data is securely stored using Supabase, including:
 
 - Search history
 - Favourite topics
-- Previous study sessions
+- Study streak
+- User profile
 
 ### Export Functionality
 
@@ -99,7 +100,6 @@ ai-study-assistant/
 
 - Python
 - Streamlit
-- Google Gemini API
 - OpenRouter API
 - JSON
 - ReportLab
@@ -150,7 +150,8 @@ Create a `.env` file in the project root directory and add the required API keys
 Example:
 
 ```env
-GEMINI_API_KEY=your_api_key
+SUPABASE_URL=url
+SUPABASE_KEY=key
 OPENROUTER_API_KEY=your_api_key
 ```
 
@@ -172,13 +173,13 @@ The application will be available locally in your browser.
 
 Planned improvements include:
 
-- User authentication
-- Study streak tracking
-- Achievement badges
 - Flashcard generation
-- Spaced repetition system
-- Cloud synchronization
-- Multi-device support
+- AI-powered study planner
+- Cloud notes synchronization
+- OCR improvements
+- Voice conversation mode
+- Performance analytics
+- Collaborative study sessions
 
 ---
 
